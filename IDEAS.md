@@ -1,3 +1,6 @@
+# Tests
+* I want complete test coverage of the business logic and import logic. Update AGENTS.md with this guidance.
+
 # Categories
 * Needs a "suggested" view, like the merchants page has. Should show the pattern (editable), match type (editable) and category (editable). A Create and apply button will then create that category and apply it to all transactions.
 * There needs to be a way to CRUD the actual categories
@@ -9,6 +12,5 @@
 # Spending Reports
 * Payment methods report should include Cash (like cash + fees from ATMs)
 * Payment methods report - I want a separate bar for each credit card, and each credit
+* I want a yearly summary report that defaults to the past 12 months and tells me: total amount spent, spending from each payment method, spending on each category (including uncategorized) and spending at each merchant (including uncategorized)
 
-# Tests
-* I want complete test coverage of the business logic and import logic. Update AGENTS.md with this guidance.
