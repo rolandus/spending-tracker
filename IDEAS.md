@@ -1,5 +1,3 @@
-# Tests
-* I want complete test coverage of the business logic and import logic. Update AGENTS.md with this guidance.
 
 # Categories
 * Needs a "suggested" view, like the merchants page has. Should show the pattern (editable), match type (editable) and category (editable). A Create and apply button will then create that category and apply it to all transactions.

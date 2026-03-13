@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   getCategoryRules,
   createCategoryRule,
@@ -7,19 +7,111 @@ import {
   applyCategoryRules,
   getCategoryStats,
   previewCategoryRule,
+  suggestCategories,
 } from '../server/functions/categories'
 import { CATEGORIES } from '../shared/categories'
 
 export const Route = createFileRoute('/categories')({
   loader: async () => {
-    const [rules, stats] = await Promise.all([getCategoryRules(), getCategoryStats()])
-    return { rules, stats }
+    const [rules, stats, suggestions] = await Promise.all([
+      getCategoryRules(),
+      getCategoryStats(),
+      suggestCategories(),
+    ])
+    return { rules, stats, suggestions }
   },
   component: CategoriesPage,
 })
 
+type Suggestion = { prefix: string; count: number; sample: string }
+
+function SuggestionRow({
+  suggestion,
+  onApplied,
+}: {
+  suggestion: Suggestion
+  onApplied: () => void
+}) {
+  const [pattern, setPattern] = useState(() => suggestion.prefix.trimEnd())
+  const [matchType, setMatchType] = useState<'contains' | 'starts_with' | 'exact'>('starts_with')
+  const [category, setCategory] = useState('')
+  const [liveCount, setLiveCount] = useState<number>(suggestion.count)
+  const [applying, setApplying] = useState(false)
+
+  useEffect(() => {
+    if (!pattern.trim()) {
+      setLiveCount(0)
+      return
+    }
+    const timer = setTimeout(async () => {
+      const result = await previewCategoryRule({ data: { pattern: pattern.trim(), matchType } })
+      setLiveCount(result.matchCount)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [pattern, matchType])
+
+  const handleApply = async () => {
+    if (!pattern.trim() || !category) return
+    setApplying(true)
+    try {
+      await createCategoryRule({ data: { pattern: pattern.trim(), matchType, category } })
+      onApplied()
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <tr className="border-b border-slate-100">
+      <td className="px-3 py-2">
+        <input
+          type="text"
+          value={pattern}
+          onChange={(e) => setPattern(e.target.value)}
+          className="w-full rounded border border-slate-300 px-2 py-1 text-xs font-mono"
+        />
+      </td>
+      <td className="px-3 py-2">
+        <select
+          value={matchType}
+          onChange={(e) => setMatchType(e.target.value as 'contains' | 'starts_with' | 'exact')}
+          className="rounded border border-slate-300 px-2 py-1 text-xs"
+        >
+          <option value="contains">Contains</option>
+          <option value="starts_with">Starts with</option>
+          <option value="exact">Exact</option>
+        </select>
+      </td>
+      <td className="px-3 py-2">
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="rounded border border-slate-300 px-2 py-1 text-xs"
+        >
+          <option value="">Select...</option>
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums text-sm">{liveCount}</td>
+      <td className="px-3 py-2 text-right">
+        <button
+          onClick={handleApply}
+          disabled={!pattern.trim() || !category || applying}
+          className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+        >
+          {applying ? 'Applying…' : 'Apply'}
+        </button>
+      </td>
+    </tr>
+  )
+}
+
 function CategoriesPage() {
-  const { rules, stats } = Route.useLoaderData()
+  const { rules, stats, suggestions } = Route.useLoaderData()
   const [showForm, setShowForm] = useState(false)
   const [pattern, setPattern] = useState('')
   const [matchType, setMatchType] = useState<'contains' | 'starts_with' | 'exact'>('contains')
@@ -145,7 +237,7 @@ function CategoriesPage() {
                 className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 value={matchType}
                 onChange={(e) => {
-                  setMatchType(e.target.value as any)
+                  setMatchType(e.target.value as 'contains' | 'starts_with' | 'exact')
                   setPreviewCount(null)
                 }}
               >
@@ -192,6 +284,38 @@ function CategoriesPage() {
               {loading ? 'Creating...' : 'Create & Apply'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Suggested rules */}
+      {suggestions.length > 0 && (
+        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200">
+            <h2 className="text-lg font-semibold">Suggested Rules</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Common uncategorized patterns (2+ transactions). Edit pattern, match type, and category, then Apply.
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Pattern</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Match Type</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Category</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Count</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {suggestions.map((s, i) => (
+                <SuggestionRow
+                  key={i}
+                  suggestion={s}
+                  onApplied={() => window.location.reload()}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

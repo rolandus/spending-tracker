@@ -128,6 +128,25 @@ export const applyCategoryRules = createServerFn({ method: 'POST' }).handler(asy
 })
 
 /**
+ * Suggest category rules by grouping uncategorized transactions by description prefix.
+ */
+export const suggestCategories = createServerFn({ method: 'GET' }).handler(async () => {
+  return db
+    .select({
+      prefix: sql<string>`UPPER(SUBSTR(description, 1, 20))`,
+      count: sql<number>`count(*)`,
+      sample: sql<string>`description`,
+    })
+    .from(transactions)
+    .where(isNull(transactions.category))
+    .groupBy(sql`UPPER(SUBSTR(description, 1, 20))`)
+    .having(sql`count(*) >= 2`)
+    .orderBy(desc(sql`count(*)`))
+    .limit(30)
+    .all()
+})
+
+/**
  * Get categorization stats.
  */
 export const getCategoryStats = createServerFn({ method: 'GET' }).handler(async () => {
