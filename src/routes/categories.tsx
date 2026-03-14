@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   getCategoryRules,
   createCategoryRule,
@@ -13,17 +13,31 @@ import { CATEGORIES } from '../shared/categories'
 
 export const Route = createFileRoute('/categories')({
   loader: async () => {
-    const [rules, stats, suggestions] = await Promise.all([
+    const [rules, stats, rawSuggestions] = await Promise.all([
       getCategoryRules(),
       getCategoryStats(),
       suggestCategories(),
     ])
+
+    // Resolve actual match counts for each suggestion using the same
+    // starts_with LIKE query the UI will use, then sort by count desc.
+    const suggestions = await Promise.all(
+      rawSuggestions.map(async (s) => {
+        const pattern = s.prefix.trimEnd()
+        const result = await previewCategoryRule({
+          data: { pattern, matchType: 'starts_with', expenseOnly: true },
+        })
+        return { ...s, pattern, count: result.matchCount }
+      }),
+    )
+    suggestions.sort((a, b) => b.count - a.count)
+
     return { rules, stats, suggestions }
   },
   component: CategoriesPage,
 })
 
-type Suggestion = { prefix: string; count: number; sample: string }
+type Suggestion = { prefix: string; pattern: string; count: number; sample: string }
 
 function SuggestionRow({
   suggestion,
@@ -32,19 +46,24 @@ function SuggestionRow({
   suggestion: Suggestion
   onApplied: () => void
 }) {
-  const [pattern, setPattern] = useState(() => suggestion.prefix.trimEnd())
+  const [pattern, setPattern] = useState(suggestion.pattern)
   const [matchType, setMatchType] = useState<'contains' | 'starts_with' | 'exact'>('starts_with')
   const [category, setCategory] = useState('')
   const [liveCount, setLiveCount] = useState<number>(suggestion.count)
   const [applying, setApplying] = useState(false)
+  const initialized = useRef(false)
 
   useEffect(() => {
+    if (!initialized.current) {
+      initialized.current = true
+      return
+    }
     if (!pattern.trim()) {
       setLiveCount(0)
       return
     }
     const timer = setTimeout(async () => {
-      const result = await previewCategoryRule({ data: { pattern: pattern.trim(), matchType } })
+      const result = await previewCategoryRule({ data: { pattern: pattern.trim(), matchType, expenseOnly: true } })
       setLiveCount(result.matchCount)
     }, 400)
     return () => clearTimeout(timer)

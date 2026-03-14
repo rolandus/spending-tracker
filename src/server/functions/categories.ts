@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
 import { categoryRules, transactions } from '../db/schema'
-import { eq, like, sql, isNull, desc } from 'drizzle-orm'
+import { eq, like, sql, isNull, desc, and, notInArray, lt } from 'drizzle-orm'
 import type { CategoryRule } from '../db/schema'
 
 /**
@@ -16,15 +16,28 @@ export const getCategoryRules = createServerFn({ method: 'GET' }).handler(async 
  */
 export const previewCategoryRule = createServerFn({ method: 'GET' })
   .inputValidator(
-    (data: { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }) => data,
+    (data: {
+      pattern: string
+      matchType: 'contains' | 'starts_with' | 'exact'
+      expenseOnly?: boolean
+    }) => data,
   )
   .handler(async ({ data }) => {
     const likePattern = buildLikePattern(data.pattern, data.matchType)
 
+    const conditions = data.expenseOnly
+      ? and(
+          sql`${transactions.description} LIKE ${likePattern}`,
+          isNull(transactions.category),
+          notInArray(transactions.transactionType, ['internal_transfer', 'cc_payment']),
+          lt(transactions.amount, 0),
+        )
+      : sql`${transactions.description} LIKE ${likePattern} AND ${transactions.category} IS NULL`
+
     const result = db
       .select({ count: sql<number>`count(*)` })
       .from(transactions)
-      .where(sql`${transactions.description} LIKE ${likePattern} AND ${transactions.category} IS NULL`)
+      .where(conditions)
       .get()
 
     return { matchCount: result?.count ?? 0 }
@@ -131,15 +144,30 @@ export const applyCategoryRules = createServerFn({ method: 'POST' }).handler(asy
  * Suggest category rules by grouping uncategorized transactions by description prefix.
  */
 export const suggestCategories = createServerFn({ method: 'GET' }).handler(async () => {
+  // Group by the "stable" part of the description: everything before the
+  // first '*' or '#' (which usually starts a unique order/check number),
+  // falling back to the first 20 characters.
+  const prefixExpr = sql`UPPER(CASE
+    WHEN INSTR(description, '*') > 0 THEN SUBSTR(description, 1, INSTR(description, '*') - 1)
+    WHEN INSTR(description, '#') > 0 THEN SUBSTR(description, 1, INSTR(description, '#') - 1)
+    ELSE SUBSTR(description, 1, 20)
+  END)`
+
   return db
     .select({
-      prefix: sql<string>`UPPER(SUBSTR(description, 1, 20))`,
+      prefix: sql<string>`${prefixExpr}`,
       count: sql<number>`count(*)`,
       sample: sql<string>`description`,
     })
     .from(transactions)
-    .where(isNull(transactions.category))
-    .groupBy(sql`UPPER(SUBSTR(description, 1, 20))`)
+    .where(
+      and(
+        isNull(transactions.category),
+        notInArray(transactions.transactionType, ['internal_transfer', 'cc_payment']),
+        lt(transactions.amount, 0),
+      ),
+    )
+    .groupBy(prefixExpr)
     .having(sql`count(*) >= 2`)
     .orderBy(desc(sql`count(*)`))
     .limit(30)

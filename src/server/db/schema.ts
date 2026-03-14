@@ -72,13 +72,23 @@ export type NewCategoryRule = typeof categoryRules.$inferInsert
 export const merchants = sqliteTable('merchants', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  pattern: text('pattern').notNull().unique(),
+  defaultCategory: text('default_category'),
+  createdAt: text('created_at')
+    .notNull()
+    .default(sql`(datetime('now'))`),
+})
+
+export const merchantPatterns = sqliteTable('merchant_patterns', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  merchantId: integer('merchant_id')
+    .notNull()
+    .references(() => merchants.id),
+  pattern: text('pattern').notNull(),
   matchType: text('match_type', {
     enum: ['contains', 'starts_with', 'exact'],
   })
     .notNull()
     .default('contains'),
-  defaultCategory: text('default_category'),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(datetime('now'))`),
@@ -86,6 +96,8 @@ export const merchants = sqliteTable('merchants', {
 
 export type Merchant = typeof merchants.$inferSelect
 export type NewMerchant = typeof merchants.$inferInsert
+export type MerchantPattern = typeof merchantPatterns.$inferSelect
+export type NewMerchantPattern = typeof merchantPatterns.$inferInsert
 
 // Type exports for use throughout the app
 export type Account = typeof accounts.$inferSelect

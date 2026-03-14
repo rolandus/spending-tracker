@@ -62,13 +62,17 @@ export function createTestDb() {
     CREATE TABLE merchants (
       id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
       name text NOT NULL,
-      pattern text NOT NULL,
-      match_type text DEFAULT 'contains' NOT NULL,
       default_category text,
       created_at text DEFAULT (datetime('now')) NOT NULL
     );
 
-    CREATE UNIQUE INDEX merchants_pattern_unique ON merchants (pattern);
+    CREATE TABLE merchant_patterns (
+      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      merchant_id integer NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+      pattern text NOT NULL,
+      match_type text DEFAULT 'contains' NOT NULL,
+      created_at text DEFAULT (datetime('now')) NOT NULL
+    );
   `)
 
   const db = drizzle(sqlite, { schema })
