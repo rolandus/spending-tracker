@@ -9,6 +9,7 @@ import {
   previewMerchantPatterns,
   getMerchantStats,
 } from '../server/functions/merchants'
+import { suggestMerchantsAI, type AISuggestion } from '../server/functions/ai-merchants'
 import { CATEGORIES } from '../shared/categories'
 
 type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
@@ -208,6 +209,179 @@ function SuggestionRow({
   )
 }
 
+function AISuggestionRow({
+  suggestion,
+  onConfirmed,
+  onDismissed,
+}: {
+  suggestion: AISuggestion
+  onConfirmed: () => void
+  onDismissed: () => void
+}) {
+  const [patterns, setPatterns] = useState<PatternInput[]>(suggestion.patterns)
+  const [name, setName] = useState(suggestion.name)
+  const [defaultCategory, setDefaultCategory] = useState(suggestion.defaultCategory)
+  const [liveCount, setLiveCount] = useState<number>(suggestion.count)
+  const [sampleDescs, setSampleDescs] = useState<string[]>([])
+  const [showSamples, setShowSamples] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const initialized = useRef(false)
+
+  const patternsKey = JSON.stringify(patterns)
+
+  useEffect(() => {
+    if (!initialized.current) {
+      initialized.current = true
+      return
+    }
+    const validPatterns = patterns.filter((p) => p.pattern.trim())
+    if (validPatterns.length === 0) {
+      setLiveCount(0)
+      setSampleDescs([])
+      return
+    }
+    const timer = setTimeout(async () => {
+      const result = await previewMerchantPatterns({ data: { patterns: validPatterns } })
+      setLiveCount(result.matchCount)
+      setSampleDescs(result.sampleDescriptions)
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [patternsKey])
+
+  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
+    setPatterns((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
+    )
+  }
+
+  const addPattern = () => {
+    setPatterns((prev) => [...prev, { pattern: '', matchType: 'contains' }])
+  }
+
+  const removePattern = (index: number) => {
+    setPatterns((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleConfirm = async () => {
+    const validPatterns = patterns.filter((p) => p.pattern.trim())
+    if (!name.trim() || validPatterns.length === 0) return
+    setApplying(true)
+    try {
+      await createMerchant({
+        data: {
+          name: name.trim(),
+          patterns: validPatterns,
+          defaultCategory: defaultCategory || null,
+        },
+      })
+      onConfirmed()
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <tr className="border-b border-slate-100 align-top">
+      <td className="px-3 py-2">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+          placeholder="Name"
+        />
+      </td>
+      <td className="px-3 py-2">
+        <div className="space-y-1">
+          {patterns.map((p, i) => (
+            <div key={i} className="flex gap-1 items-center">
+              <input
+                type="text"
+                value={p.pattern}
+                onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
+                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
+                placeholder="Pattern"
+              />
+              <select
+                value={p.matchType}
+                onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
+                className="rounded border border-slate-300 px-1 py-1 text-xs"
+              >
+                <option value="contains">Contains</option>
+                <option value="starts_with">Starts with</option>
+                <option value="exact">Exact</option>
+              </select>
+              {patterns.length > 1 && (
+                <button
+                  onClick={() => removePattern(i)}
+                  className="text-red-400 hover:text-red-600 text-xs px-1"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addPattern}
+            className="text-blue-600 hover:text-blue-700 text-xs"
+          >
+            + Add pattern
+          </button>
+        </div>
+      </td>
+      <td className="px-3 py-2">
+        <select
+          value={defaultCategory}
+          onChange={(e) => setDefaultCategory(e.target.value)}
+          className="rounded border border-slate-300 px-2 py-1 text-xs"
+        >
+          <option value="">None</option>
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <button
+          onClick={() => setShowSamples(!showSamples)}
+          className="tabular-nums text-sm text-blue-600 hover:text-blue-700 cursor-pointer"
+          title="Click to toggle sample descriptions"
+        >
+          {liveCount}
+        </button>
+        {showSamples && sampleDescs.length > 0 && (
+          <div className="mt-1 text-left">
+            {sampleDescs.map((d, i) => (
+              <div key={i} className="text-xs font-mono text-slate-500 truncate" title={d}>
+                {d}
+              </div>
+            ))}
+          </div>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={handleConfirm}
+            disabled={!name.trim() || patterns.every((p) => !p.pattern.trim()) || applying}
+            className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-40"
+          >
+            {applying ? 'Saving…' : 'Confirm'}
+          </button>
+          <button
+            onClick={onDismissed}
+            className="px-3 py-1 rounded border border-slate-300 text-slate-500 text-xs hover:bg-slate-50"
+          >
+            Dismiss
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 function MerchantsPage() {
   const { merchants: merchantList, suggestions, stats } = Route.useLoaderData()
   const [showForm, setShowForm] = useState(false)
@@ -222,6 +396,9 @@ function MerchantsPage() {
     matchCount: number
     sampleDescriptions: string[]
   } | null>(null)
+  const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([])
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
 
   // Live preview for create form
   const patternsKey = JSON.stringify(patterns)
@@ -284,6 +461,28 @@ function MerchantsPage() {
     window.location.reload()
   }
 
+  const handleSuggestAI = async () => {
+    setAiLoading(true)
+    setAiError(null)
+    try {
+      const result = await suggestMerchantsAI()
+      setAiSuggestions(result.suggestions)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'AI suggestion failed'
+      setAiError(msg)
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const handleAIConfirmed = (index: number) => {
+    setAiSuggestions((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleAIDismissed = (index: number) => {
+    setAiSuggestions((prev) => prev.filter((_, i) => i !== index))
+  }
+
   const handleApplyAll = async () => {
     setLoading(true)
     try {
@@ -338,6 +537,64 @@ function MerchantsPage() {
             <span className="text-sm text-green-600 font-medium">{message}</span>
           )}
         </div>
+      </div>
+
+      {/* AI Suggestions */}
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">AI-Assisted Merchant Creation</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Send transaction descriptions to AI for automatic merchant grouping and pattern suggestions.
+              </p>
+            </div>
+            <button
+              onClick={handleSuggestAI}
+              disabled={aiLoading}
+              className="px-4 py-2 rounded-md bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              {aiLoading ? (
+                <>
+                  <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                'Suggest with AI'
+              )}
+            </button>
+          </div>
+        </div>
+
+        {aiError && (
+          <div className="px-6 py-3 bg-red-50 border-b border-red-100 text-sm text-red-700">
+            {aiError}
+          </div>
+        )}
+
+        {aiSuggestions.length > 0 && (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-violet-50">
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Name</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Patterns</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Category</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Count</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {aiSuggestions.map((s, i) => (
+                <AISuggestionRow
+                  key={`${s.name}-${i}`}
+                  suggestion={s}
+                  onConfirmed={() => handleAIConfirmed(i)}
+                  onDismissed={() => handleAIDismissed(i)}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* New merchant form */}

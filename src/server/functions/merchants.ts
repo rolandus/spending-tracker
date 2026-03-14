@@ -3,7 +3,7 @@ import { db } from '../db'
 import { merchants, merchantPatterns, transactions } from '../db/schema'
 import { eq, sql, desc, isNull } from 'drizzle-orm'
 
-type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
+export type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
 
 /**
  * List all merchants with their patterns and transaction counts.
@@ -249,7 +249,7 @@ export const getMerchantStats = createServerFn({ method: 'GET' }).handler(async 
 /**
  * Build a SQL fragment with OR'd LIKE conditions for multiple patterns.
  */
-function buildMultiPatternWhere(patterns: PatternInput[]) {
+export function buildMultiPatternWhere(patterns: PatternInput[]) {
   const validPatterns = patterns.filter((p) => p.pattern.trim())
   if (validPatterns.length === 0) return null
 
@@ -265,7 +265,7 @@ function buildMultiPatternWhere(patterns: PatternInput[]) {
   return combined
 }
 
-function buildLikePattern(
+export function buildLikePattern(
   pattern: string,
   matchType: 'contains' | 'starts_with' | 'exact',
 ): string {
