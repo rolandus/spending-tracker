@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { getTransaction, updateTransaction } from '../server/functions/transactions'
 
@@ -27,12 +27,26 @@ function formatCurrency(amount: number): string {
 function TransactionDetailPage() {
   const txn = Route.useLoaderData()
   const navigate = useNavigate()
+  const router = useRouter()
 
   const [category, setCategory] = useState(txn.category ?? '')
   const [notes, setNotes] = useState(txn.notes ?? '')
   const [transactionType, setTransactionType] = useState(txn.transactionType)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [togglingIgnored, setTogglingIgnored] = useState(false)
+
+  const handleToggleIgnored = async () => {
+    setTogglingIgnored(true)
+    try {
+      await updateTransaction({
+        data: { id: txn.id, ignored: txn.ignored ? 0 : 1 },
+      })
+      router.invalidate()
+    } finally {
+      setTogglingIgnored(false)
+    }
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -68,11 +82,41 @@ function TransactionDetailPage() {
         </button>
       </div>
 
+      {txn.ignored === 1 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-yellow-600 text-sm font-medium">
+              This transaction is ignored and excluded from all reports and analytics.
+            </span>
+          </div>
+          <button
+            onClick={handleToggleIgnored}
+            disabled={togglingIgnored}
+            className="px-3 py-1 rounded-md bg-yellow-100 text-yellow-700 text-sm font-medium hover:bg-yellow-200 disabled:opacity-50"
+          >
+            {togglingIgnored ? 'Restoring...' : 'Unignore'}
+          </button>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg border border-slate-200">
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200">
-          <h1 className="text-xl font-bold">{txn.description}</h1>
-          <p className="text-sm text-slate-500 mt-1">{txn.accountName}</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-bold">{txn.description}</h1>
+              <p className="text-sm text-slate-500 mt-1">{txn.accountName}</p>
+            </div>
+            {!txn.ignored && (
+              <button
+                onClick={handleToggleIgnored}
+                disabled={togglingIgnored}
+                className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-500 text-sm hover:bg-slate-50 disabled:opacity-50"
+              >
+                {togglingIgnored ? 'Ignoring...' : 'Ignore'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Read-only fields */}

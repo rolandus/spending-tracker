@@ -30,6 +30,8 @@ function seedTransactions() {
     { accountId: 3, date: '2025-01-17', description: 'NETFLIX.COM', amount: -15.99, transactionType: 'expense', sourceFile: 'test.csv', importHash: 'm3' },
     { accountId: 3, date: '2025-01-18', description: 'WHOLE FOODS MARKET #1234 AUSTIN TX', amount: -85.0, transactionType: 'expense', sourceFile: 'test.csv', importHash: 'm4' },
     { accountId: 3, date: '2025-01-19', description: 'WHOLE FOODS MARKET #5678 DALLAS TX', amount: -45.0, transactionType: 'expense', sourceFile: 'test.csv', importHash: 'm5' },
+    // Ignored transaction with AMZN in description — should be excluded from merchant rules
+    { accountId: 1, date: '2025-01-20', description: 'AMZN MKTP US*IGNORED', amount: -50, transactionType: 'expense', ignored: 1, sourceFile: 'test.csv', importHash: 'm6' },
   ]).run()
 }
 
@@ -69,7 +71,7 @@ describe('createMerchant with patterns', () => {
 
     const where = buildMultiPatternWhere([{ pattern: 'AMZN MKTP', matchType: 'contains' }])
     const result = db.run(
-      sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL`),
+      sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL AND ignored = 0`),
     )
 
     expect(result.changes).toBe(2)
@@ -89,7 +91,7 @@ describe('createMerchant with patterns', () => {
       { pattern: 'Amazon.com', matchType: 'starts_with' },
     ])
     const result = db.run(
-      sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL`),
+      sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL AND ignored = 0`),
     )
 
     // Should match 3: two AMZN MKTP + one Amazon.com
@@ -104,7 +106,7 @@ describe('createMerchant with patterns', () => {
     )
 
     const where = buildMultiPatternWhere([{ pattern: 'AMZN MKTP', matchType: 'contains' }])
-    db.run(sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL`))
+    db.run(sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL AND ignored = 0`))
     const catResult = db.run(
       sql`UPDATE transactions SET category = ${merchant.defaultCategory} WHERE merchant_id = ${merchant.id} AND category IS NULL`,
     )
@@ -157,7 +159,7 @@ describe('applyMerchantRules', () => {
       const where = buildMultiPatternWhere(mPatterns)
       if (!where) continue
       const result = db.run(
-        sql.raw(`UPDATE transactions SET merchant_id = ${m.id} WHERE (${where}) AND merchant_id IS NULL`),
+        sql.raw(`UPDATE transactions SET merchant_id = ${m.id} WHERE (${where}) AND merchant_id IS NULL AND ignored = 0`),
       )
       totalMatched += result.changes
     }
@@ -177,7 +179,7 @@ describe('deleteMerchant', () => {
     ])
 
     const where = buildMultiPatternWhere([{ pattern: 'AMZN MKTP', matchType: 'contains' }])
-    db.run(sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where})`))
+    db.run(sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND ignored = 0`))
 
     let matched = db.select().from(transactions).where(eq(transactions.merchantId, merchant.id)).all()
     expect(matched).toHaveLength(2)
@@ -210,14 +212,14 @@ describe('suggestMerchants', () => {
         sample: sql<string>`description`,
       })
       .from(transactions)
-      .where(isNull(transactions.merchantId))
+      .where(sql`${transactions.merchantId} IS NULL AND ${transactions.ignored} = 0`)
       .groupBy(prefixExpr)
       .having(sql`count(*) >= 2`)
       .orderBy(sql`count(*) DESC`)
       .limit(20)
       .all()
 
-    // AMZN MKTP US should group (2 txns with * delimiter)
+    // AMZN MKTP US should group (2 txns with * delimiter), m6 ignored
     const amznSuggestion = suggestions.find((s) => s.prefix.includes('AMZN'))
     expect(amznSuggestion).toBeDefined()
     expect(amznSuggestion!.count).toBe(2)
@@ -226,6 +228,30 @@ describe('suggestMerchants', () => {
     const wholeFoodsSuggestion = suggestions.find((s) => s.prefix.includes('WHOLE'))
     expect(wholeFoodsSuggestion).toBeDefined()
     expect(wholeFoodsSuggestion!.count).toBe(2)
+  })
+
+  it('excludes ignored transactions from suggestions', () => {
+    const prefixExpr = sql`UPPER(CASE
+      WHEN INSTR(description, '*') > 0 THEN SUBSTR(description, 1, INSTR(description, '*') - 1)
+      WHEN INSTR(description, '#') > 0 THEN SUBSTR(description, 1, INSTR(description, '#') - 1)
+      ELSE SUBSTR(description, 1, 20)
+    END)`
+
+    const suggestions = db
+      .select({
+        prefix: sql<string>`${prefixExpr}`,
+        count: sql<number>`count(*)`,
+      })
+      .from(transactions)
+      .where(sql`${transactions.merchantId} IS NULL AND ${transactions.ignored} = 0`)
+      .groupBy(prefixExpr)
+      .having(sql`count(*) >= 2`)
+      .all()
+
+    // AMZN MKTP US should group with count 2 (m1, m2), NOT 3 (m6 is ignored)
+    const amznSuggestion = suggestions.find((s) => s.prefix.includes('AMZN'))
+    expect(amznSuggestion).toBeDefined()
+    expect(amznSuggestion!.count).toBe(2)
   })
 
   it('excludes transactions with a merchant already assigned', () => {
@@ -255,5 +281,24 @@ describe('suggestMerchants', () => {
 
     const amznSuggestion = suggestions.find((s) => s.prefix.includes('AMZN'))
     expect(amznSuggestion).toBeUndefined()
+  })
+})
+
+describe('ignored transactions excluded from merchant rules', () => {
+  it('merchant pattern does not assign to ignored transactions', () => {
+    const merchant = createMerchantWithPatterns('Amazon', [
+      { pattern: 'AMZN MKTP', matchType: 'contains' },
+    ])
+
+    const where = buildMultiPatternWhere([{ pattern: 'AMZN MKTP', matchType: 'contains' }])
+    const result = db.run(
+      sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL AND ignored = 0`),
+    )
+
+    // Should match m1, m2 only — NOT m6 (ignored)
+    expect(result.changes).toBe(2)
+
+    const ignoredTxn = db.select().from(transactions).where(eq(transactions.importHash, 'm6')).get()!
+    expect(ignoredTxn.merchantId).toBeNull()
   })
 })

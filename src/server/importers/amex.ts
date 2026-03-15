@@ -31,6 +31,7 @@ export const importAmex: ImporterFn = (csvContent, accountId, sourceFile) => {
     const transactionType = inferTransactionType(description, amount, 'credit_card')
     const paymentMethod = inferPaymentMethod('credit_card', description)
     const importHash = computeImportHash(accountId, date, amount, description)
+    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -45,6 +46,7 @@ export const importAmex: ImporterFn = (csvContent, accountId, sourceFile) => {
       sourceCategory: null,
       category: null,
       notes: null,
+      ignored,
       sourceFile,
       importHash,
     }

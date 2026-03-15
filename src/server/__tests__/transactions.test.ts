@@ -15,6 +15,9 @@ function seedTransactions() {
     { accountId: 4, date: '2025-01-25', description: 'DIRECT DEP PAYROLL', amount: 3000, transactionType: 'income', paymentMethod: 'direct_deposit', sourceFile: 't.csv', importHash: 't4' },
     { accountId: 4, date: '2025-02-01', description: 'ELECTRIC COMPANY', amount: -150, transactionType: 'expense', paymentMethod: 'ach', sourceFile: 't.csv', importHash: 't5' },
     { accountId: 4, date: '2025-02-05', description: 'TRANSFER TO SAVINGS', amount: -500, transactionType: 'internal_transfer', paymentMethod: 'transfer', sourceFile: 't.csv', importHash: 't6' },
+    // Ignored transactions
+    { accountId: 4, date: '2025-01-20', description: 'CC PAYMENT AMEX', amount: -200, transactionType: 'cc_payment', paymentMethod: 'ach', ignored: 1, sourceFile: 't.csv', importHash: 't7' },
+    { accountId: 4, date: '2025-01-22', description: 'TRANSFER TO CHECKING', amount: -1000, transactionType: 'internal_transfer', paymentMethod: 'transfer', ignored: 1, sourceFile: 't.csv', importHash: 't8' },
   ]).run()
 }
 
@@ -105,8 +108,8 @@ describe('getTransactions filtering', () => {
 
   it('returns all transactions with no filters', () => {
     const result = queryTransactions({})
-    expect(result.total).toBe(6)
-    expect(result.transactions).toHaveLength(6)
+    expect(result.total).toBe(8)
+    expect(result.transactions).toHaveLength(8)
   })
 
   it('filters by account ID', () => {
@@ -117,7 +120,7 @@ describe('getTransactions filtering', () => {
 
   it('filters by date range', () => {
     const result = queryTransactions({ dateFrom: '2025-01-15', dateTo: '2025-01-25' })
-    expect(result.total).toBe(3) // NETFLIX, WHOLE FOODS, DIRECT DEP
+    expect(result.total).toBe(5) // NETFLIX, WHOLE FOODS, DIRECT DEP + 2 ignored (t7, t8)
   })
 
   it('filters by transaction type', () => {
@@ -168,7 +171,7 @@ describe('pagination', () => {
   it('paginates correctly', () => {
     const page1 = queryTransactions({ page: 1, pageSize: 2 })
     expect(page1.transactions).toHaveLength(2)
-    expect(page1.totalPages).toBe(3) // 6 items / 2 per page
+    expect(page1.totalPages).toBe(4) // 8 items / 2 per page
     expect(page1.page).toBe(1)
 
     const page2 = queryTransactions({ page: 2, pageSize: 2 })
@@ -177,19 +180,23 @@ describe('pagination', () => {
     const page3 = queryTransactions({ page: 3, pageSize: 2 })
     expect(page3.transactions).toHaveLength(2)
 
+    const page4 = queryTransactions({ page: 4, pageSize: 2 })
+    expect(page4.transactions).toHaveLength(2)
+
     // No overlap between pages
     const allIds = [
       ...page1.transactions.map(t => t.id),
       ...page2.transactions.map(t => t.id),
       ...page3.transactions.map(t => t.id),
+      ...page4.transactions.map(t => t.id),
     ]
-    expect(new Set(allIds).size).toBe(6)
+    expect(new Set(allIds).size).toBe(8)
   })
 
   it('returns empty for page beyond total', () => {
     const result = queryTransactions({ page: 100, pageSize: 50 })
     expect(result.transactions).toHaveLength(0)
-    expect(result.total).toBe(6)
+    expect(result.total).toBe(8)
   })
 })
 
@@ -267,12 +274,16 @@ describe('updateTransaction', () => {
 })
 
 describe('getTransactionStats', () => {
-  it('returns total transaction count', () => {
-    const result = db.select({ count: sql<number>`count(*)` }).from(transactions).get()!
-    expect(result.count).toBe(6)
+  it('returns total transaction count excluding ignored', () => {
+    const result = db
+      .select({ count: sql<number>`count(*)` })
+      .from(transactions)
+      .where(eq(transactions.ignored, 0))
+      .get()!
+    expect(result.count).toBe(6) // 8 total minus 2 ignored
   })
 
-  it('returns per-account counts', () => {
+  it('returns per-account counts excluding ignored', () => {
     const accountCounts = db
       .select({
         accountId: transactions.accountId,
@@ -281,6 +292,7 @@ describe('getTransactionStats', () => {
       })
       .from(transactions)
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+      .where(eq(transactions.ignored, 0))
       .groupBy(transactions.accountId)
       .all()
 
@@ -288,5 +300,55 @@ describe('getTransactionStats', () => {
     expect(byAccount.get('American Express')).toBe(2)
     expect(byAccount.get('Chase')).toBe(1)
     expect(byAccount.get('Lake Ridge Checking')).toBe(3)
+  })
+})
+
+describe('ignored transactions', () => {
+  it('excludes ignored transactions by default', () => {
+    const rows = db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.ignored, 0))
+      .all()
+    expect(rows).toHaveLength(6)
+    expect(rows.every(r => r.ignored === 0)).toBe(true)
+  })
+
+  it('includes ignored transactions when explicitly requested', () => {
+    const rows = db.select().from(transactions).all()
+    expect(rows).toHaveLength(8)
+    const ignored = rows.filter(r => r.ignored === 1)
+    expect(ignored).toHaveLength(2)
+    expect(ignored.map(r => r.importHash).sort()).toEqual(['t7', 't8'])
+  })
+
+  it('can toggle ignored status on/off', () => {
+    const txn = db.select().from(transactions).where(eq(transactions.importHash, 't1')).get()!
+    expect(txn.ignored).toBe(0)
+
+    db.update(transactions).set({ ignored: 1 }).where(eq(transactions.id, txn.id)).run()
+    const ignored = db.select().from(transactions).where(eq(transactions.id, txn.id)).get()!
+    expect(ignored.ignored).toBe(1)
+
+    db.update(transactions).set({ ignored: 0 }).where(eq(transactions.id, txn.id)).run()
+    const restored = db.select().from(transactions).where(eq(transactions.id, txn.id)).get()!
+    expect(restored.ignored).toBe(0)
+  })
+
+  it('ignored transactions excluded from stats counts', () => {
+    const total = db
+      .select({ count: sql<number>`count(*)` })
+      .from(transactions)
+      .where(eq(transactions.ignored, 0))
+      .get()!
+    expect(total.count).toBe(6)
+
+    db.update(transactions).set({ ignored: 1 }).where(eq(transactions.importHash, 't1')).run()
+    const after = db
+      .select({ count: sql<number>`count(*)` })
+      .from(transactions)
+      .where(eq(transactions.ignored, 0))
+      .get()!
+    expect(after.count).toBe(5)
   })
 })

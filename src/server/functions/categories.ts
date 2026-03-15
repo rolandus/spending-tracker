@@ -29,10 +29,15 @@ export const previewCategoryRule = createServerFn({ method: 'GET' })
       ? and(
           sql`${transactions.description} LIKE ${likePattern}`,
           isNull(transactions.category),
+          eq(transactions.ignored, 0),
           notInArray(transactions.transactionType, ['internal_transfer', 'cc_payment']),
           lt(transactions.amount, 0),
         )
-      : sql`${transactions.description} LIKE ${likePattern} AND ${transactions.category} IS NULL`
+      : and(
+          sql`${transactions.description} LIKE ${likePattern}`,
+          isNull(transactions.category),
+          eq(transactions.ignored, 0),
+        )
 
     const result = db
       .select({ count: sql<number>`count(*)` })
@@ -73,7 +78,7 @@ export const createCategoryRule = createServerFn({ method: 'POST' })
     // Apply immediately to uncategorized transactions
     const likePattern = buildLikePattern(data.pattern, matchType)
     const result = db.run(
-      sql`UPDATE transactions SET category = ${data.category} WHERE description LIKE ${likePattern} AND category IS NULL`,
+      sql`UPDATE transactions SET category = ${data.category} WHERE description LIKE ${likePattern} AND category IS NULL AND ignored = 0`,
     )
 
     return { rule, appliedCount: result.changes }
@@ -132,7 +137,7 @@ export const applyCategoryRules = createServerFn({ method: 'POST' }).handler(asy
   for (const rule of rules) {
     const likePattern = buildLikePattern(rule.pattern, rule.matchType)
     const result = db.run(
-      sql`UPDATE transactions SET category = ${rule.category} WHERE description LIKE ${likePattern} AND category IS NULL`,
+      sql`UPDATE transactions SET category = ${rule.category} WHERE description LIKE ${likePattern} AND category IS NULL AND ignored = 0`,
     )
     totalApplied += result.changes
   }
@@ -163,6 +168,7 @@ export const suggestCategories = createServerFn({ method: 'GET' }).handler(async
     .where(
       and(
         isNull(transactions.category),
+        eq(transactions.ignored, 0),
         notInArray(transactions.transactionType, ['internal_transfer', 'cc_payment']),
         lt(transactions.amount, 0),
       ),
@@ -181,12 +187,13 @@ export const getCategoryStats = createServerFn({ method: 'GET' }).handler(async 
   const total = db
     .select({ count: sql<number>`count(*)` })
     .from(transactions)
+    .where(eq(transactions.ignored, 0))
     .get()
 
   const categorized = db
     .select({ count: sql<number>`count(*)` })
     .from(transactions)
-    .where(sql`${transactions.category} IS NOT NULL`)
+    .where(and(sql`${transactions.category} IS NOT NULL`, eq(transactions.ignored, 0)))
     .get()
 
   const totalCount = total?.count ?? 0

@@ -41,6 +41,7 @@ export function createTestDb() {
       category text,
       notes text,
       merchant_id integer,
+      ignored integer DEFAULT 0 NOT NULL,
       source_file text NOT NULL,
       import_hash text NOT NULL,
       created_at text DEFAULT (datetime('now')) NOT NULL,

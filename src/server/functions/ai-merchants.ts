@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
 import { merchants, merchantPatterns, transactions } from '../db/schema'
-import { sql, isNull, and, lt, notInArray } from 'drizzle-orm'
+import { sql, isNull, and, lt, notInArray, eq } from 'drizzle-orm'
 import { buildMultiPatternWhere, type PatternInput } from './merchants'
 import { CATEGORIES } from '../../shared/categories'
 
@@ -235,7 +235,7 @@ function calculateCounts(rawSuggestions: RawSuggestion[]): AISuggestion[] {
       const result = db
         .select({ count: sql<number>`count(*)` })
         .from(transactions)
-        .where(sql`(${whereClause}) AND merchant_id IS NULL`)
+        .where(sql`(${whereClause}) AND merchant_id IS NULL AND ignored = 0`)
         .get()
       count = result?.count ?? 0
     }
@@ -271,6 +271,7 @@ export const suggestMerchantsAI = createServerFn({ method: 'POST' }).handler(
       .where(
         and(
           isNull(transactions.merchantId),
+          eq(transactions.ignored, 0),
           lt(transactions.amount, 0),
           notInArray(transactions.transactionType, [
             'internal_transfer',

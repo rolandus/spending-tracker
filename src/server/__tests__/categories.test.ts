@@ -23,6 +23,8 @@ function seedTransactions() {
     { accountId: 3, date: '2025-01-18', description: 'WHOLE FOODS MARKET', amount: -85.0, transactionType: 'expense', sourceFile: 'test.csv', importHash: 'h4' },
     { accountId: 3, date: '2025-01-19', description: 'WHOLE FOODS #123', amount: -45.0, transactionType: 'expense', sourceFile: 'test.csv', importHash: 'h5' },
     { accountId: 1, date: '2025-01-20', description: 'MANUALLY CATEGORIZED', amount: -10.0, transactionType: 'expense', category: 'Shopping', sourceFile: 'test.csv', importHash: 'h6' },
+    // Ignored transaction with AMAZON in description — should be excluded from category rules
+    { accountId: 1, date: '2025-01-21', description: 'AMAZON IGNORED', amount: -100, transactionType: 'expense', ignored: 1, sourceFile: 'test.csv', importHash: 'h7' },
   ]).run()
 }
 
@@ -58,11 +60,11 @@ describe('createCategoryRule + apply', () => {
 
     const likePattern = buildLikePattern('AMAZON', 'contains')
     const result = db.run(
-      sql`UPDATE transactions SET category = 'Shopping' WHERE description LIKE ${likePattern} AND category IS NULL`,
+      sql`UPDATE transactions SET category = 'Shopping' WHERE description LIKE ${likePattern} AND category IS NULL AND ignored = 0`,
     )
 
     expect(rule.pattern).toBe('AMAZON')
-    expect(result.changes).toBe(2) // AMAZON PURCHASE + AMAZON PRIME (MANUALLY CATEGORIZED already has category)
+    expect(result.changes).toBe(2) // AMAZON PURCHASE + AMAZON PRIME (MANUALLY CATEGORIZED already has category, h7 is ignored)
   })
 
   it('does not overwrite manually-categorized transactions', () => {
@@ -78,15 +80,15 @@ describe('createCategoryRule + apply', () => {
 })
 
 describe('previewCategoryRule', () => {
-  it('counts uncategorized matches', () => {
+  it('counts uncategorized matches excluding ignored', () => {
     const likePattern = buildLikePattern('AMAZON', 'contains')
     const result = db
       .select({ count: sql<number>`count(*)` })
       .from(transactions)
-      .where(sql`${transactions.description} LIKE ${likePattern} AND ${transactions.category} IS NULL`)
+      .where(sql`${transactions.description} LIKE ${likePattern} AND ${transactions.category} IS NULL AND ${transactions.ignored} = 0`)
       .get()
 
-    expect(result!.count).toBe(2) // AMAZON PURCHASE + AMAZON PRIME
+    expect(result!.count).toBe(2) // AMAZON PURCHASE + AMAZON PRIME (h7 ignored)
   })
 
   it('does not count already-categorized matches', () => {
@@ -134,7 +136,7 @@ describe('applyCategoryRules (priority order)', () => {
     for (const rule of rules) {
       const likePattern = buildLikePattern(rule.pattern, rule.matchType as 'contains' | 'starts_with' | 'exact')
       const result = db.run(
-        sql`UPDATE transactions SET category = ${rule.category} WHERE description LIKE ${likePattern} AND category IS NULL`,
+        sql`UPDATE transactions SET category = ${rule.category} WHERE description LIKE ${likePattern} AND category IS NULL AND ignored = 0`,
       )
       totalApplied += result.changes
     }
@@ -198,32 +200,61 @@ describe('deleteCategoryRule', () => {
 })
 
 describe('getCategoryStats', () => {
-  it('returns correct counts and percentage', () => {
-    // 1 of 6 is categorized (h6 = Shopping)
-    const total = db.select({ count: sql<number>`count(*)` }).from(transactions).get()!
+  it('returns correct counts and percentage excluding ignored', () => {
+    // 1 of 6 non-ignored is categorized (h6 = Shopping); h7 is ignored
+    const total = db
+      .select({ count: sql<number>`count(*)` })
+      .from(transactions)
+      .where(eq(transactions.ignored, 0))
+      .get()!
     const categorized = db
       .select({ count: sql<number>`count(*)` })
       .from(transactions)
-      .where(sql`${transactions.category} IS NOT NULL`)
+      .where(sql`${transactions.category} IS NOT NULL AND ${transactions.ignored} = 0`)
       .get()!
 
     const totalCount = total.count
     const categorizedCount = categorized.count
 
-    expect(totalCount).toBe(6)
+    expect(totalCount).toBe(6) // 7 total minus 1 ignored
     expect(categorizedCount).toBe(1)
     expect(totalCount - categorizedCount).toBe(5)
     expect(Math.round((categorizedCount / totalCount) * 100)).toBe(17)
   })
 
   it('returns 0 percentage when no transactions', () => {
-    // Clear all transactions
     db.run(sql`DELETE FROM transactions`)
 
     const total = db.select({ count: sql<number>`count(*)` }).from(transactions).get()!
     expect(total.count).toBe(0)
-    // Guard against division by zero
     const percentage = total.count > 0 ? Math.round((0 / total.count) * 100) : 0
     expect(percentage).toBe(0)
+  })
+})
+
+describe('ignored transactions excluded from category rules', () => {
+  it('category rule does not apply to ignored transactions', () => {
+    const likePattern = buildLikePattern('AMAZON', 'contains')
+    const result = db.run(
+      sql`UPDATE transactions SET category = 'Shopping' WHERE description LIKE ${likePattern} AND category IS NULL AND ignored = 0`,
+    )
+
+    // Should match h1 + h2 only, NOT h7 (ignored)
+    expect(result.changes).toBe(2)
+
+    const ignoredTxn = db.select().from(transactions).where(eq(transactions.importHash, 'h7')).get()!
+    expect(ignoredTxn.category).toBeNull()
+  })
+
+  it('preview count excludes ignored transactions', () => {
+    const likePattern = buildLikePattern('AMAZON', 'contains')
+    const result = db
+      .select({ count: sql<number>`count(*)` })
+      .from(transactions)
+      .where(sql`${transactions.description} LIKE ${likePattern} AND ${transactions.category} IS NULL AND ${transactions.ignored} = 0`)
+      .get()
+
+    // h1 + h2 match, but NOT h7 (ignored)
+    expect(result!.count).toBe(2)
   })
 })

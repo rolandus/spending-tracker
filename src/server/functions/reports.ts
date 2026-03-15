@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
 import { transactions } from '../db/schema'
-import { sql } from 'drizzle-orm'
+import { sql, eq } from 'drizzle-orm'
 
 /**
  * Monthly spending grouped by category.
@@ -20,7 +20,7 @@ export const getMonthlySpendingByCategory = createServerFn({ method: 'GET' })
       })
       .from(transactions)
       .where(
-        sql`${transactions.transactionType} = 'expense' AND ${transactions.date} LIKE ${yearMonth + '%'}`,
+        sql`${transactions.transactionType} = 'expense' AND ${transactions.ignored} = 0 AND ${transactions.date} LIKE ${yearMonth + '%'}`,
       )
       .groupBy(sql`COALESCE(${transactions.category}, 'Uncategorized')`)
       .orderBy(sql`SUM(ABS(${transactions.amount})) DESC`)
@@ -46,7 +46,7 @@ export const getMonthlySpendingTrend = createServerFn({ method: 'GET' })
         count: sql<number>`count(*)`,
       })
       .from(transactions)
-      .where(sql`${transactions.transactionType} = 'expense'`)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.ignored} = 0`)
       .groupBy(sql`SUBSTR(${transactions.date}, 1, 7)`)
       .orderBy(sql`SUBSTR(${transactions.date}, 1, 7) DESC`)
       .limit(months)
@@ -81,7 +81,7 @@ export const getPaymentMethodBreakdown = createServerFn({ method: 'GET' })
           SUM(ABS(amount)) as total,
           COUNT(*) as count
         FROM transactions
-        WHERE transaction_type = 'expense'${dateFilter}
+        WHERE transaction_type = 'expense' AND ignored = 0${dateFilter}
         GROUP BY COALESCE(payment_method, 'unknown')
         ORDER BY SUM(ABS(amount)) DESC
       `),
@@ -105,7 +105,7 @@ export const getYearOverYearComparison = createServerFn({ method: 'GET' })
             COALESCE(category, 'Uncategorized') as category,
             SUM(ABS(amount)) as total
           FROM transactions
-          WHERE transaction_type = 'expense' AND date LIKE '${year}%'
+          WHERE transaction_type = 'expense' AND ignored = 0 AND date LIKE '${year}%'
           GROUP BY COALESCE(category, 'Uncategorized')
           ORDER BY SUM(ABS(amount)) DESC
         `),
@@ -150,6 +150,7 @@ export const getAvailablePeriods = createServerFn({ method: 'GET' }).handler(asy
       yearMonth: sql<string>`DISTINCT SUBSTR(${transactions.date}, 1, 7)`,
     })
     .from(transactions)
+    .where(eq(transactions.ignored, 0))
     .orderBy(sql`SUBSTR(${transactions.date}, 1, 7) DESC`)
     .all()
 

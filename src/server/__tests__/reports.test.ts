@@ -30,6 +30,9 @@ function seedReportData() {
     { accountId: 4, date: '2025-01-20', description: 'TRANSFER TO CHECKING', amount: -500, transactionType: 'internal_transfer', paymentMethod: 'transfer', sourceFile: 't.csv', importHash: 'r10' },
     { accountId: 4, date: '2025-01-25', description: 'AMEX PAYMENT', amount: -125, transactionType: 'cc_payment', paymentMethod: 'ach', sourceFile: 't.csv', importHash: 'r11' },
     { accountId: 1, date: '2025-01-28', description: 'REFUND FROM STORE', amount: 20, transactionType: 'refund', paymentMethod: 'credit', sourceFile: 't.csv', importHash: 'r12' },
+
+    // Ignored expense — should NOT appear in any report even though it's type 'expense'
+    { accountId: 1, date: '2025-01-18', description: 'IGNORED EXPENSE', amount: -999, transactionType: 'expense', paymentMethod: 'credit', category: 'Groceries', ignored: 1, sourceFile: 't.csv', importHash: 'r13' },
   ]).run()
 }
 
@@ -51,7 +54,7 @@ describe('getMonthlySpendingByCategory', () => {
         count: sql<number>`count(*)`,
       })
       .from(transactions)
-      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.date} LIKE ${yearMonth + '%'}`)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.date} LIKE ${yearMonth + '%'} AND ${transactions.ignored} = 0`)
       .groupBy(sql`COALESCE(${transactions.category}, 'Uncategorized')`)
       .orderBy(sql`SUM(ABS(${transactions.amount})) DESC`)
       .all()
@@ -72,11 +75,11 @@ describe('getMonthlySpendingByCategory', () => {
     const rows = db
       .select({ total: sql<number>`SUM(ABS(${transactions.amount}))` })
       .from(transactions)
-      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.date} LIKE ${yearMonth + '%'}`)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.date} LIKE ${yearMonth + '%'} AND ${transactions.ignored} = 0`)
       .get()
 
     // Total should only be the 3 expense transactions: 80 + 45 + 150 = 275
-    // NOT include: income(3000), transfer(500), cc_payment(125), refund(20)
+    // NOT include: income(3000), transfer(500), cc_payment(125), refund(20), ignored(999)
     expect(rows!.total).toBe(275)
   })
 })
@@ -90,7 +93,7 @@ describe('getMonthlySpendingTrend', () => {
         count: sql<number>`count(*)`,
       })
       .from(transactions)
-      .where(sql`${transactions.transactionType} = 'expense'`)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.ignored} = 0`)
       .groupBy(sql`SUBSTR(${transactions.date}, 1, 7)`)
       .orderBy(sql`SUBSTR(${transactions.date}, 1, 7) DESC`)
       .limit(12)
@@ -109,7 +112,7 @@ describe('getMonthlySpendingTrend', () => {
         total: sql<number>`SUM(ABS(${transactions.amount}))`,
       })
       .from(transactions)
-      .where(sql`${transactions.transactionType} = 'expense'`)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.ignored} = 0`)
       .groupBy(sql`SUBSTR(${transactions.date}, 1, 7)`)
       .all()
 
@@ -130,7 +133,7 @@ describe('getPaymentMethodBreakdown', () => {
         SUM(ABS(amount)) as total,
         COUNT(*) as count
       FROM transactions
-      WHERE transaction_type = 'expense'
+      WHERE transaction_type = 'expense' AND ignored = 0
       GROUP BY COALESCE(payment_method, 'unknown')
       ORDER BY SUM(ABS(amount)) DESC
     `).all() as { method: string; total: number; count: number }[]
@@ -151,7 +154,7 @@ describe('getPaymentMethodBreakdown', () => {
         SUM(ABS(amount)) as total,
         COUNT(*) as count
       FROM transactions
-      WHERE transaction_type = 'expense' AND date LIKE '${ym}%'
+      WHERE transaction_type = 'expense' AND ignored = 0 AND date LIKE '${ym}%'
       GROUP BY COALESCE(payment_method, 'unknown')
       ORDER BY SUM(ABS(amount)) DESC
     `).all() as { method: string; total: number; count: number }[]
@@ -167,7 +170,7 @@ describe('getPaymentMethodBreakdown', () => {
         COALESCE(payment_method, 'unknown') as method,
         SUM(ABS(amount)) as total
       FROM transactions
-      WHERE transaction_type = 'expense' AND date LIKE '2025%'
+      WHERE transaction_type = 'expense' AND ignored = 0 AND date LIKE '2025%'
       GROUP BY COALESCE(payment_method, 'unknown')
     `).all() as { method: string; total: number }[]
 
@@ -184,7 +187,7 @@ describe('getYearOverYearComparison', () => {
           COALESCE(category, 'Uncategorized') as category,
           SUM(ABS(amount)) as total
         FROM transactions
-        WHERE transaction_type = 'expense' AND date LIKE '${year}%'
+        WHERE transaction_type = 'expense' AND ignored = 0 AND date LIKE '${year}%'
         GROUP BY COALESCE(category, 'Uncategorized')
         ORDER BY SUM(ABS(amount)) DESC
       `).all() as { category: string; total: number }[]
@@ -256,7 +259,7 @@ describe('double-count guard', () => {
     const expenseOnlyTotal = db
       .select({ total: sql<number>`SUM(ABS(${transactions.amount}))` })
       .from(transactions)
-      .where(sql`${transactions.transactionType} = 'expense'`)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.ignored} = 0`)
       .get()!
 
     const allTotal = db
@@ -264,13 +267,66 @@ describe('double-count guard', () => {
       .from(transactions)
       .get()!
 
-    // Expense total: 80+45+150+90+40+70+55+200 = 730
+    // Expense total (non-ignored): 80+45+150+90+40+70+55+200 = 730
     expect(expenseOnlyTotal.total).toBe(730)
 
-    // All total includes income(3000), transfer(500), cc_payment(125), refund(20)
-    expect(allTotal.total).toBe(730 + 3000 + 500 + 125 + 20)
+    // All total includes income(3000), transfer(500), cc_payment(125), refund(20), ignored(999)
+    expect(allTotal.total).toBe(730 + 3000 + 500 + 125 + 20 + 999)
 
     // The critical assertion: expense-only is much less than all
     expect(expenseOnlyTotal.total).toBeLessThan(allTotal.total)
+  })
+})
+
+describe('ignored transactions excluded from reports', () => {
+  it('ignored expenses do not appear in spending by category', () => {
+    const yearMonth = '2025-01'
+    const rows = db
+      .select({
+        category: sql<string>`COALESCE(${transactions.category}, 'Uncategorized')`,
+        total: sql<number>`SUM(ABS(${transactions.amount}))`,
+      })
+      .from(transactions)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.date} LIKE ${yearMonth + '%'} AND ${transactions.ignored} = 0`)
+      .groupBy(sql`COALESCE(${transactions.category}, 'Uncategorized')`)
+      .all()
+
+    const grandTotal = rows.reduce((sum, r) => sum + r.total, 0)
+    // Should be 275 (80+45+150), NOT 1274 (with ignored 999)
+    expect(grandTotal).toBe(275)
+
+    const groceries = rows.find(r => r.category === 'Groceries')
+    // Should be 80, NOT 80+999
+    expect(groceries!.total).toBe(80)
+  })
+
+  it('ignored expenses do not appear in spending trend', () => {
+    const rows = db
+      .select({
+        yearMonth: sql<string>`SUBSTR(${transactions.date}, 1, 7)`,
+        total: sql<number>`SUM(ABS(${transactions.amount}))`,
+      })
+      .from(transactions)
+      .where(sql`${transactions.transactionType} = 'expense' AND ${transactions.ignored} = 0`)
+      .groupBy(sql`SUBSTR(${transactions.date}, 1, 7)`)
+      .all()
+
+    const byMonth = new Map(rows.map(r => [r.yearMonth, r.total]))
+    expect(byMonth.get('2025-01')).toBe(275) // NOT 275+999
+  })
+
+  it('ignored expenses do not appear in payment method breakdown', () => {
+    const rows = sqlite.prepare(`
+      SELECT
+        COALESCE(payment_method, 'unknown') as method,
+        SUM(ABS(amount)) as total
+      FROM transactions
+      WHERE transaction_type = 'expense' AND ignored = 0
+      GROUP BY COALESCE(payment_method, 'unknown')
+    `).all() as { method: string; total: number }[]
+
+    const byMethod = new Map(rows.map(r => [r.method, r.total]))
+    // credit: 80+45+90+40+70+55 = 380 (NOT 380+999)
+    expect(byMethod.get('credit')).toBe(380)
   })
 })

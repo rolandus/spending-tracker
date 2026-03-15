@@ -10,6 +10,7 @@ export interface TransactionFilters {
   dateTo?: string
   transactionType?: string
   search?: string
+  showIgnored?: boolean
   page?: number
   pageSize?: number
   sortBy?: string
@@ -42,6 +43,7 @@ export const getTransactions = createServerFn({ method: 'GET' })
       dateTo,
       transactionType,
       search,
+      showIgnored,
       page = 1,
       pageSize = 50,
       sortBy = 'date',
@@ -50,6 +52,11 @@ export const getTransactions = createServerFn({ method: 'GET' })
 
     // Build WHERE conditions
     const conditions = []
+
+    // Exclude ignored transactions unless explicitly requested
+    if (!showIgnored) {
+      conditions.push(eq(transactions.ignored, 0))
+    }
 
     if (accountId) {
       conditions.push(eq(transactions.accountId, accountId))
@@ -104,6 +111,7 @@ export const getTransactions = createServerFn({ method: 'GET' })
         category: transactions.category,
         notes: transactions.notes,
         merchantId: transactions.merchantId,
+        ignored: transactions.ignored,
         sourceFile: transactions.sourceFile,
         importHash: transactions.importHash,
         createdAt: transactions.createdAt,
@@ -154,6 +162,7 @@ export const getTransaction = createServerFn({ method: 'GET' })
         category: transactions.category,
         notes: transactions.notes,
         merchantId: transactions.merchantId,
+        ignored: transactions.ignored,
         sourceFile: transactions.sourceFile,
         importHash: transactions.importHash,
         createdAt: transactions.createdAt,
@@ -184,6 +193,7 @@ export const updateTransaction = createServerFn({ method: 'POST' })
       category?: string | null
       notes?: string | null
       transactionType?: Transaction['transactionType']
+      ignored?: number
     }) => data,
   )
   .handler(async ({ data }) => {
@@ -193,6 +203,7 @@ export const updateTransaction = createServerFn({ method: 'POST' })
     if ('category' in fields) updates.category = fields.category
     if ('notes' in fields) updates.notes = fields.notes
     if ('transactionType' in fields) updates.transactionType = fields.transactionType
+    if ('ignored' in fields) updates.ignored = fields.ignored
 
     if (Object.keys(updates).length === 0) {
       throw new Error('No fields to update')
@@ -210,6 +221,7 @@ export const getTransactionStats = createServerFn({ method: 'GET' }).handler(asy
   const totalResult = db
     .select({ count: sql<number>`count(*)` })
     .from(transactions)
+    .where(eq(transactions.ignored, 0))
     .get()
 
   const accountCounts = db
@@ -220,6 +232,7 @@ export const getTransactionStats = createServerFn({ method: 'GET' }).handler(asy
     })
     .from(transactions)
     .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    .where(eq(transactions.ignored, 0))
     .groupBy(transactions.accountId)
     .all()
 

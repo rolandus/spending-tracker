@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
 import { merchants, merchantPatterns, transactions } from '../db/schema'
-import { eq, sql, desc, isNull } from 'drizzle-orm'
+import { eq, sql, desc, isNull, and } from 'drizzle-orm'
 
 export type { PatternInput } from '../../shared/pattern-matching'
 export { matchesPattern, matchesAnyPattern } from '../../shared/pattern-matching'
@@ -27,7 +27,7 @@ export const getMerchants = createServerFn({ method: 'GET' }).handler(async () =
       count: sql<number>`count(*)`,
     })
     .from(transactions)
-    .where(sql`${transactions.merchantId} IS NOT NULL`)
+    .where(sql`${transactions.merchantId} IS NOT NULL AND ${transactions.ignored} = 0`)
     .groupBy(transactions.merchantId)
     .all()
 
@@ -77,14 +77,14 @@ export const createMerchant = createServerFn({ method: 'POST' })
     if (!whereClause) return { merchant, matched: 0, categorized: 0 }
 
     const matchResult = db.run(
-      sql`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${whereClause}) AND merchant_id IS NULL`,
+      sql`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
     )
 
     // If there's a default category, also categorize uncategorized matches
     let categorized = 0
     if (data.defaultCategory) {
       const catResult = db.run(
-        sql`UPDATE transactions SET category = ${data.defaultCategory} WHERE merchant_id = ${merchant.id} AND category IS NULL`,
+        sql`UPDATE transactions SET category = ${data.defaultCategory} WHERE merchant_id = ${merchant.id} AND category IS NULL AND ignored = 0`,
       )
       categorized = catResult.changes
     }
@@ -157,7 +157,7 @@ export const applyMerchantRules = createServerFn({ method: 'POST' }).handler(asy
     if (!whereClause) continue
 
     const result = db.run(
-      sql`UPDATE transactions SET merchant_id = ${m.id} WHERE (${whereClause}) AND merchant_id IS NULL`,
+      sql`UPDATE transactions SET merchant_id = ${m.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
     )
     totalMatched += result.changes
   }
@@ -182,7 +182,7 @@ export const suggestMerchants = createServerFn({ method: 'GET' }).handler(async 
       sample: sql<string>`description`,
     })
     .from(transactions)
-    .where(isNull(transactions.merchantId))
+    .where(and(isNull(transactions.merchantId), eq(transactions.ignored, 0)))
     .groupBy(prefixExpr)
     .having(sql`count(*) >= 2`)
     .orderBy(desc(sql`count(*)`))
@@ -205,13 +205,13 @@ export const previewMerchantPatterns = createServerFn({ method: 'GET' })
     const countResult = db
       .select({ count: sql<number>`count(*)` })
       .from(transactions)
-      .where(sql`(${whereClause}) AND merchant_id IS NULL`)
+      .where(sql`(${whereClause}) AND merchant_id IS NULL AND ignored = 0`)
       .get()
 
     const samples = db
       .select({ description: sql<string>`DISTINCT description` })
       .from(transactions)
-      .where(sql`(${whereClause}) AND merchant_id IS NULL`)
+      .where(sql`(${whereClause}) AND merchant_id IS NULL AND ignored = 0`)
       .orderBy(sql`RANDOM()`)
       .limit(10)
       .all()
@@ -229,12 +229,13 @@ export const getMerchantStats = createServerFn({ method: 'GET' }).handler(async 
   const total = db
     .select({ count: sql<number>`count(*)` })
     .from(transactions)
+    .where(eq(transactions.ignored, 0))
     .get()
 
   const assigned = db
     .select({ count: sql<number>`count(*)` })
     .from(transactions)
-    .where(sql`${transactions.merchantId} IS NOT NULL`)
+    .where(sql`${transactions.merchantId} IS NOT NULL AND ${transactions.ignored} = 0`)
     .get()
 
   const totalCount = total?.count ?? 0
@@ -290,7 +291,7 @@ export const addMerchantPatterns = createServerFn({ method: 'POST' })
     if (!whereClause) return { matched: 0 }
 
     const result = db.run(
-      sql`UPDATE transactions SET merchant_id = ${data.merchantId} WHERE (${whereClause}) AND merchant_id IS NULL`,
+      sql`UPDATE transactions SET merchant_id = ${data.merchantId} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
     )
     return { matched: result.changes }
   })

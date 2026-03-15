@@ -573,7 +573,7 @@ function ImportPage() {
               <span className="font-semibold text-green-700">{autoAssignedCount}</span>{' '}
               transactions matched existing merchant rules.{' '}
               <span className="font-semibold text-slate-700">
-                {pipelineTransactions.filter((t) => !t.merchantId).length}
+                {pipelineTransactions.filter((t) => !t.merchantId && !t.ignored).length}
               </span>{' '}
               remain unassigned.
             </p>
@@ -683,6 +683,11 @@ function ImportPage() {
                 <span>
                   {reviewTransactions.filter((t) => t.category).length} with category
                 </span>
+                {reviewTransactions.some((t) => t.ignored) && (
+                  <span className="text-amber-600 font-medium">
+                    {reviewTransactions.filter((t) => t.ignored).length} ignored
+                  </span>
+                )}
               </div>
             </div>
 
@@ -702,7 +707,7 @@ function ImportPage() {
                   {reviewTransactions.map((txn, i) => (
                     <tr
                       key={i}
-                      className="border-b border-slate-50 hover:bg-slate-50"
+                      className={`border-b border-slate-50 hover:bg-slate-50 ${txn.ignored ? 'opacity-50' : ''}`}
                     >
                       <td className="px-2 py-1.5 text-xs tabular-nums whitespace-nowrap">
                         {txn.date}
@@ -722,7 +727,11 @@ function ImportPage() {
                         {Math.abs(txn.amount).toFixed(2)}
                       </td>
                       <td className="px-2 py-1.5 text-xs">
-                        {txn.merchantName ? (
+                        {txn.ignored ? (
+                          <span className="bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                            Ignored
+                          </span>
+                        ) : txn.merchantName ? (
                           <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium">
                             {txn.merchantName}
                           </span>
@@ -734,7 +743,8 @@ function ImportPage() {
                         <select
                           value={txn.category ?? ''}
                           onChange={(e) => handleCategoryChange(i, e.target.value)}
-                          className="rounded border border-slate-200 px-1 py-0.5 text-xs w-full"
+                          disabled={!!txn.ignored}
+                          className="rounded border border-slate-200 px-1 py-0.5 text-xs w-full disabled:opacity-50"
                         >
                           <option value="">—</option>
                           {CATEGORIES.map((c) => (

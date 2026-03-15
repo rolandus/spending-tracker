@@ -44,6 +44,7 @@ export const transactions = sqliteTable('transactions', {
   category: text('category'),
   notes: text('notes'),
   merchantId: integer('merchant_id').references(() => merchants.id),
+  ignored: integer('ignored').notNull().default(0),
   sourceFile: text('source_file').notNull(),
   importHash: text('import_hash').notNull().unique(),
   createdAt: text('created_at')

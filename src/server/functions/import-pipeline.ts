@@ -93,6 +93,12 @@ export const assignExistingMerchants = createServerFn({ method: 'POST' })
     const unassignedDescMap = new Map<string, number>()
 
     for (const txn of data.transactions) {
+      // Skip merchant matching for ignored transactions (cc_payment, internal_transfer)
+      if (txn.ignored) {
+        pipelineTransactions.push({ ...txn, merchantId: null, merchantName: null })
+        continue
+      }
+
       let matched = false
       for (const rule of merchantRules) {
         if (matchesAnyPattern(txn.description, rule.patterns)) {
@@ -229,6 +235,7 @@ export const commitImport = createServerFn({ method: 'POST' })
             category: txn.category,
             notes: txn.notes,
             merchantId: finalMerchantId,
+            ignored: txn.ignored ?? 0,
             sourceFile: txn.sourceFile,
             importHash: txn.importHash,
           })

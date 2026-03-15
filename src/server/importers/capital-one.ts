@@ -33,6 +33,7 @@ export const importCapitalOne: ImporterFn = (csvContent, accountId, sourceFile) 
     const transactionType = inferTransactionType(description, amount, 'credit_card')
     const paymentMethod = inferPaymentMethod('credit_card', description)
     const importHash = computeImportHash(accountId, date, amount, description)
+    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -47,6 +48,7 @@ export const importCapitalOne: ImporterFn = (csvContent, accountId, sourceFile) 
       sourceCategory: category?.trim() || null,
       category: null,
       notes: null,
+      ignored,
       sourceFile,
       importHash,
     }

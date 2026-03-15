@@ -38,6 +38,7 @@ export const importLakeRidge: ImporterFn = (csvContent, accountId, sourceFile) =
     const transactionType = inferTransactionType(description, amount, accountType)
     const paymentMethod = inferPaymentMethod(accountType, description, cleanCheckNum)
     const importHash = computeImportHash(accountId, date, amount, description)
+    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -52,6 +53,7 @@ export const importLakeRidge: ImporterFn = (csvContent, accountId, sourceFile) =
       sourceCategory: null,
       category: null,
       notes: null,
+      ignored,
       sourceFile,
       importHash,
     }
