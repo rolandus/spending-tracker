@@ -130,10 +130,11 @@ export const updateMerchant = createServerFn({ method: 'POST' })
       name?: string
       defaultCategory?: string | null
       patterns?: PatternInput[]
+      reapply?: boolean
     }) => data,
   )
   .handler(async ({ data }) => {
-    const { id, patterns, ...fields } = data
+    const { id, patterns, reapply, ...fields } = data
     const updates: Record<string, unknown> = {}
 
     if (fields.name !== undefined) updates.name = fields.name
@@ -152,7 +153,27 @@ export const updateMerchant = createServerFn({ method: 'POST' })
       }
     }
 
-    return { success: true }
+    let matched = 0
+    let categorized = 0
+    if (reapply && patterns) {
+      const whereClause = buildMultiPatternWhere(patterns)
+      if (whereClause) {
+        const result = db.run(
+          sql`UPDATE transactions SET merchant_id = ${id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
+        )
+        matched = result.changes
+
+        const merchant = db.select().from(merchants).where(eq(merchants.id, id)).get()
+        if (merchant?.defaultCategory) {
+          const catResult = db.run(
+            sql`UPDATE transactions SET category = ${merchant.defaultCategory} WHERE merchant_id = ${id} AND category IS NULL AND ignored = 0`,
+          )
+          categorized = catResult.changes
+        }
+      }
+    }
+
+    return { success: true, matched, categorized }
   })
 
 /**

@@ -360,6 +360,226 @@ function PendingMerchantPageRow({
   )
 }
 
+type MerchantWithDetails = {
+  id: number
+  name: string
+  defaultCategory: string | null
+  status: string
+  patterns: { id: number; pattern: string; matchType: string }[]
+  transactionCount: number
+}
+
+function ConfirmedMerchantRow({
+  merchant,
+  onUpdated,
+  onDeleted,
+}: {
+  merchant: MerchantWithDetails
+  onUpdated: () => void
+  onDeleted: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(merchant.name)
+  const [patterns, setPatterns] = useState<PatternInput[]>(
+    merchant.patterns.map((p) => ({ pattern: p.pattern, matchType: p.matchType as PatternInput['matchType'] })),
+  )
+  const [defaultCategory, setDefaultCategory] = useState(merchant.defaultCategory ?? '')
+  const [reapply, setReapply] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
+  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
+    setPatterns((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
+    )
+  }
+
+  const addPattern = () => {
+    setPatterns((prev) => [...prev, { pattern: '', matchType: 'contains' }])
+  }
+
+  const removePattern = (index: number) => {
+    setPatterns((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleCancel = () => {
+    setEditing(false)
+    setName(merchant.name)
+    setPatterns(merchant.patterns.map((p) => ({ pattern: p.pattern, matchType: p.matchType as PatternInput['matchType'] })))
+    setDefaultCategory(merchant.defaultCategory ?? '')
+    setReapply(false)
+    setResult(null)
+  }
+
+  const handleSave = async () => {
+    const validPatterns = patterns.filter((p) => p.pattern.trim())
+    if (!name.trim() || validPatterns.length === 0) return
+    setSaving(true)
+    try {
+      const res = await updateMerchant({
+        data: {
+          id: merchant.id,
+          name: name.trim(),
+          defaultCategory: defaultCategory || null,
+          patterns: validPatterns,
+          reapply,
+        },
+      })
+      if (reapply && res.matched > 0) {
+        setResult(`Matched ${res.matched} transaction(s)${res.categorized ? `, categorized ${res.categorized}` : ''}`)
+        setTimeout(() => onUpdated(), 1500)
+      } else {
+        onUpdated()
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <tr className="border-b border-slate-100">
+        <td className="px-4 py-2 font-medium">{merchant.name}</td>
+        <td className="px-4 py-2">
+          <div className="flex flex-wrap gap-1">
+            {merchant.patterns.map((p) => (
+              <span
+                key={p.id}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-slate-100 text-slate-700"
+              >
+                {p.pattern}
+                <span className="text-slate-400">
+                  ({p.matchType.replace('_', ' ')})
+                </span>
+              </span>
+            ))}
+          </div>
+        </td>
+        <td className="px-4 py-2">
+          {merchant.defaultCategory ? (
+            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
+              {merchant.defaultCategory}
+            </span>
+          ) : (
+            <span className="text-slate-400">—</span>
+          )}
+        </td>
+        <td className="px-4 py-2 text-right text-slate-600">{merchant.transactionCount}</td>
+        <td className="px-4 py-2 text-right">
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={() => setEditing(true)}
+              className="text-blue-600 hover:text-blue-700 text-sm"
+            >
+              Edit
+            </button>
+            <button
+              onClick={onDeleted}
+              className="text-red-600 hover:text-red-700 text-sm"
+            >
+              Delete
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <tr className="border-b border-slate-100 bg-blue-50/30 align-top">
+      <td className="px-4 py-2">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+        />
+      </td>
+      <td className="px-4 py-2">
+        <div className="space-y-1">
+          {patterns.map((p, i) => (
+            <div key={i} className="flex gap-1 items-center">
+              <input
+                type="text"
+                value={p.pattern}
+                onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
+                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
+              />
+              <select
+                value={p.matchType}
+                onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
+                className="rounded border border-slate-300 px-1 py-1 text-xs"
+              >
+                <option value="contains">Contains</option>
+                <option value="starts_with">Starts with</option>
+                <option value="exact">Exact</option>
+              </select>
+              {patterns.length > 1 && (
+                <button
+                  onClick={() => removePattern(i)}
+                  className="text-red-400 hover:text-red-600 text-xs px-1"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addPattern}
+            className="text-blue-600 hover:text-blue-700 text-xs"
+          >
+            + Add pattern
+          </button>
+        </div>
+      </td>
+      <td className="px-4 py-2">
+        <select
+          value={defaultCategory}
+          onChange={(e) => setDefaultCategory(e.target.value)}
+          className="rounded border border-slate-300 px-2 py-1 text-xs"
+        >
+          <option value="">None</option>
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-2 text-right text-slate-600">{merchant.transactionCount}</td>
+      <td className="px-4 py-2">
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-center gap-1.5 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={reapply}
+              onChange={(e) => setReapply(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Re-apply patterns
+          </label>
+          <button
+            onClick={handleSave}
+            disabled={!name.trim() || patterns.every((p) => !p.pattern.trim()) || saving}
+            className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={handleCancel}
+            className="px-3 py-1 rounded border border-slate-300 text-slate-600 text-xs hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          {result && (
+            <span className="text-xs text-green-600 font-medium">{result}</span>
+          )}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 function MerchantsPage() {
   const { merchants: merchantList, suggestions, stats, pendingMerchants: initialPending } = Route.useLoaderData()
   const [showForm, setShowForm] = useState(false)
@@ -758,42 +978,12 @@ function MerchantsPage() {
             </thead>
             <tbody>
               {merchantList.map((m) => (
-                <tr key={m.id} className="border-b border-slate-100">
-                  <td className="px-4 py-2 font-medium">{m.name}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {m.patterns.map((p) => (
-                        <span
-                          key={p.id}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-slate-100 text-slate-700"
-                        >
-                          {p.pattern}
-                          <span className="text-slate-400">
-                            ({p.matchType.replace('_', ' ')})
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2">
-                    {m.defaultCategory ? (
-                      <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
-                        {m.defaultCategory}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right text-slate-600">{m.transactionCount}</td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() => handleDelete(m.id)}
-                      className="text-red-600 hover:text-red-700 text-sm"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
+                <ConfirmedMerchantRow
+                  key={m.id}
+                  merchant={m}
+                  onUpdated={() => window.location.reload()}
+                  onDeleted={() => handleDelete(m.id)}
+                />
               ))}
             </tbody>
           </table>
