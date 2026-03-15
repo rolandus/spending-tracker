@@ -4,7 +4,7 @@ import { importChase } from './chase'
 import { importLakeRidge } from './lake-ridge'
 import type { ImporterFn } from './types'
 
-export type { NormalizedTransaction, ImportResult, ImporterFn } from './types'
+export type { NormalizedTransaction, PipelineTransaction, ImportResult, ImporterFn } from './types'
 
 /**
  * Map institution identifiers to their importer functions.

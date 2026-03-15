@@ -16,6 +16,14 @@ export type ImporterFn = (
 ) => NormalizedTransaction[]
 
 /**
+ * A transaction moving through the import pipeline with merchant assignment.
+ */
+export type PipelineTransaction = NormalizedTransaction & {
+  merchantId: number | null
+  merchantName: string | null
+}
+
+/**
  * Result of an import operation.
  */
 export interface ImportResult {

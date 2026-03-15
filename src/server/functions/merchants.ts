@@ -3,7 +3,9 @@ import { db } from '../db'
 import { merchants, merchantPatterns, transactions } from '../db/schema'
 import { eq, sql, desc, isNull } from 'drizzle-orm'
 
-export type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
+export type { PatternInput } from '../../shared/pattern-matching'
+export { matchesPattern, matchesAnyPattern } from '../../shared/pattern-matching'
+import type { PatternInput } from '../../shared/pattern-matching'
 
 /**
  * List all merchants with their patterns and transaction counts.
@@ -264,6 +266,34 @@ export function buildMultiPatternWhere(patterns: PatternInput[]) {
   }
   return combined
 }
+
+/**
+ * Append patterns to an existing merchant without replacing existing ones,
+ * then apply the new patterns to unassigned transactions DB-wide.
+ */
+export const addMerchantPatterns = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { merchantId: number; patterns: PatternInput[] }) => data,
+  )
+  .handler(async ({ data }) => {
+    for (const p of data.patterns) {
+      db.insert(merchantPatterns)
+        .values({
+          merchantId: data.merchantId,
+          pattern: p.pattern,
+          matchType: p.matchType,
+        })
+        .run()
+    }
+
+    const whereClause = buildMultiPatternWhere(data.patterns)
+    if (!whereClause) return { matched: 0 }
+
+    const result = db.run(
+      sql`UPDATE transactions SET merchant_id = ${data.merchantId} WHERE (${whereClause}) AND merchant_id IS NULL`,
+    )
+    return { matched: result.changes }
+  })
 
 export function buildLikePattern(
   pattern: string,

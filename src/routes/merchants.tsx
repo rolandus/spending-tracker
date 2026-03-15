@@ -399,6 +399,7 @@ function MerchantsPage() {
   const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([])
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [aiFromCache, setAiFromCache] = useState(false)
 
   // Live preview for create form
   const patternsKey = JSON.stringify(patterns)
@@ -467,6 +468,7 @@ function MerchantsPage() {
     try {
       const result = await suggestMerchantsAI()
       setAiSuggestions(result.suggestions)
+      setAiFromCache(result.fromCache ?? false)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'AI suggestion failed'
       setAiError(msg)
@@ -569,6 +571,12 @@ function MerchantsPage() {
         {aiError && (
           <div className="px-6 py-3 bg-red-50 border-b border-red-100 text-sm text-red-700">
             {aiError}
+          </div>
+        )}
+
+        {aiFromCache && aiSuggestions.length > 0 && (
+          <div className="px-6 py-2 bg-amber-50 border-b border-amber-100 text-sm text-amber-700">
+            Loaded from cache (<code className="text-xs">ai-suggestions-cache.json</code>). Delete or rename the file to fetch fresh suggestions from the API.
           </div>
         )}
 

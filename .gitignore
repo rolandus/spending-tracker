@@ -11,6 +11,9 @@ dist-ssr
 .vinxi
 __unconfig*
 todos.json
+ai-suggestions-cache.json
+ignore-ai-suggestions-cache.json
+IMPORT_PIPELINE.md
 
 # Database
 data/*.db
