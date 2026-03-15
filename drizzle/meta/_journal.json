@@ -29,6 +29,13 @@
       "when": 1773542506257,
       "tag": "0003_last_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1773607916135,
+      "tag": "0004_early_inhumans",
+      "breakpoints": true
     }
   ]
 }

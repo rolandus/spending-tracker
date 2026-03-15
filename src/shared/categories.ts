@@ -19,7 +19,9 @@ export const CATEGORIES = [
   'Internet/Phone',
   'Personal Care',
   'Home Improvement',
+  'Property Maintenance',
   'Gifts/Donations',
+  'Income',
   'Fees/Interest',
   'Other',
 ] as const

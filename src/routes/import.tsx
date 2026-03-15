@@ -9,10 +9,10 @@ import {
   requestAISuggestions,
   commitImport,
 } from '../server/functions/import-pipeline'
-import { matchesAnyPattern, type PatternInput } from '../shared/pattern-matching'
+import { getPendingMerchants } from '../server/functions/merchants'
 import { CATEGORIES } from '../shared/categories'
 import type { NormalizedTransaction, PipelineTransaction } from '../server/importers'
-import type { AISuggestion } from '../server/functions/ai-merchants'
+import type { PendingMerchant } from '../server/functions/ai-merchants'
 
 export const Route = createFileRoute('/import')({
   loader: () => getAccounts(),
@@ -65,129 +65,67 @@ function StepIndicator({ current }: { current: Step }) {
   )
 }
 
-// ── AI Suggestion Row ────────────────────────────────────────────────
+// ── Pending Merchant Row ─────────────────────────────────────────────
 
-function ImportAISuggestionRow({
-  suggestion,
-  onApprove,
-  onDecline,
+function PendingMerchantRow({
+  merchant,
+  isConfirmed,
+  onConfirm,
+  onSkip,
 }: {
-  suggestion: AISuggestion
-  onApprove: (s: AISuggestion) => void
-  onDecline: () => void
+  merchant: PendingMerchant
+  isConfirmed: boolean
+  onConfirm: (id: number) => void
+  onSkip: (id: number) => void
 }) {
-  const [patterns, setPatterns] = useState<PatternInput[]>(suggestion.patterns)
-  const [name, setName] = useState(suggestion.name)
-  const [defaultCategory, setDefaultCategory] = useState(suggestion.defaultCategory)
-
-  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
-    setPatterns((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
-    )
-  }
-
-  const addPattern = () => {
-    setPatterns((prev) => [...prev, { pattern: '', matchType: 'contains' }])
-  }
-
-  const removePattern = (index: number) => {
-    setPatterns((prev) => prev.filter((_, i) => i !== index))
-  }
-
   return (
-    <tr className="border-b border-slate-100 align-top">
+    <tr className={`border-b border-slate-100 align-top ${isConfirmed ? 'bg-green-50' : ''}`}>
       <td className="px-3 py-2">
-        {suggestion.type === 'modify' && (
+        {merchant.modifiesMerchantId && (
           <span className="block text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5 mb-1 w-fit">
-            Modify: {suggestion.existingMerchantName}
+            Adds patterns to existing merchant
           </span>
         )}
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-          placeholder="Name"
-        />
+        <span className="text-sm font-medium">{merchant.name}</span>
       </td>
       <td className="px-3 py-2">
         <div className="space-y-1">
-          {patterns.map((p, i) => (
+          {merchant.patterns.map((p, i) => (
             <div key={i} className="flex gap-1 items-center">
-              <input
-                type="text"
-                value={p.pattern}
-                onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
-                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
-                placeholder="Pattern"
-              />
-              <select
-                value={p.matchType}
-                onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
-                className="rounded border border-slate-300 px-1 py-1 text-xs"
-              >
-                <option value="contains">Contains</option>
-                <option value="starts_with">Starts with</option>
-                <option value="exact">Exact</option>
-              </select>
-              {patterns.length > 1 && (
-                <button
-                  onClick={() => removePattern(i)}
-                  className="text-red-400 hover:text-red-600 text-xs px-1"
-                >
-                  &times;
-                </button>
-              )}
+              <span className="flex-1 rounded bg-slate-50 border border-slate-200 px-2 py-1 text-xs font-mono">
+                {p.pattern}
+              </span>
+              <span className="text-[10px] text-slate-500 bg-slate-100 rounded px-1 py-0.5">
+                {p.matchType.replace('_', ' ')}
+              </span>
             </div>
           ))}
-          <button
-            onClick={addPattern}
-            className="text-blue-600 hover:text-blue-700 text-xs"
-          >
-            + Add pattern
-          </button>
         </div>
       </td>
-      <td className="px-3 py-2">
-        <select
-          value={defaultCategory}
-          onChange={(e) => setDefaultCategory(e.target.value)}
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
-        >
-          <option value="">None</option>
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td className="px-3 py-2 text-right text-sm tabular-nums text-slate-600">
-        {suggestion.matchedDescriptions.length}
+      <td className="px-3 py-2 text-xs text-slate-600">
+        {merchant.defaultCategory ?? '—'}
       </td>
       <td className="px-3 py-2 text-right">
-        <div className="flex flex-col gap-1">
-          <button
-            onClick={() =>
-              onApprove({
-                ...suggestion,
-                name,
-                patterns: patterns.filter((p) => p.pattern.trim()),
-                defaultCategory,
-              })
-            }
-            disabled={!name.trim() || patterns.every((p) => !p.pattern.trim())}
-            className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-40"
-          >
-            Approve
-          </button>
-          <button
-            onClick={onDecline}
-            className="px-3 py-1 rounded border border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50"
-          >
-            Decline
-          </button>
-        </div>
+        {isConfirmed ? (
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-medium">
+            &#10003; Confirmed
+          </span>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => onConfirm(merchant.id)}
+              className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700"
+            >
+              Confirm
+            </button>
+            <button
+              onClick={() => onSkip(merchant.id)}
+              className="px-3 py-1 rounded border border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50"
+            >
+              Skip
+            </button>
+          </div>
+        )}
       </td>
     </tr>
   )
@@ -215,13 +153,9 @@ function ImportPage() {
   // Step 3: Merchant state
   const [pipelineTransactions, setPipelineTransactions] = useState<PipelineTransaction[]>([])
   const [autoAssignedCount, setAutoAssignedCount] = useState(0)
-  const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([])
-  const [approvedNew, setApprovedNew] = useState<
-    { name: string; patterns: PatternInput[]; defaultCategory: string | null }[]
-  >([])
-  const [approvedModify, setApprovedModify] = useState<
-    { existingMerchantName: string; patterns: PatternInput[] }[]
-  >([])
+  const [pendingMerchants, setPendingMerchants] = useState<PendingMerchant[]>([])
+  const [confirmedMerchantIds, setConfirmedMerchantIds] = useState<Set<number>>(new Set())
+  const [skippedMerchantIds, setSkippedMerchantIds] = useState<Set<number>>(new Set())
 
   // Step 4: Review state (transactions with final category edits)
   const [reviewTransactions, setReviewTransactions] = useState<PipelineTransaction[]>([])
@@ -231,8 +165,7 @@ function ImportPage() {
     inserted: number
     skipped: number
     errors: string[]
-    merchantsCreated: number
-    merchantsModified: number
+    merchantsConfirmed: number
   } | null>(null)
 
   // ── Step 1 handlers ──────────────────────────────────────────────
@@ -300,7 +233,7 @@ function ImportPage() {
     setLoadingMessage('Assigning institution transactions...')
 
     const rawTransactions: NormalizedTransaction[] = pipelineTransactions.map(
-      ({ merchantId: _mid, merchantName: _mname, ...rest }) => rest,
+      ({ merchantId: _mid, merchantName: _mname, merchantStatus: _ms, ...rest }) => rest,
     )
 
     // Step 1: Assign institution transactions (checks, fees, interest)
@@ -308,27 +241,73 @@ function ImportPage() {
       data: { transactions: rawTransactions, accountId: selectedAccountId! },
     })
 
-    // Step 2: Match remaining transactions against existing merchant patterns
+    // Step 2: Match remaining transactions against existing merchant patterns (confirmed + pending)
     setLoadingMessage('Matching against existing merchants...')
     const assignResult = await assignExistingMerchants({
       data: { transactions: institutionResult.transactions },
     })
 
-    setPipelineTransactions(assignResult.transactions)
-    setAutoAssignedCount(assignResult.autoAssignedCount)
+    let finalTransactions = assignResult.transactions
+    let totalAutoAssigned = assignResult.autoAssignedCount
 
+    // Step 3: If unassigned descriptions remain, call AI to create new pending merchants
     if (assignResult.unassignedDescriptions.length > 0) {
       setLoadingMessage('Analyzing transactions with AI...')
       try {
-        const aiResult = await requestAISuggestions({
+        await requestAISuggestions({
           data: { descriptions: assignResult.unassignedDescriptions },
         })
-        setAiSuggestions(aiResult.suggestions)
+
+        // Step 4: Second assignment pass — new pending merchants now match
+        setLoadingMessage('Re-matching with AI suggestions...')
+        const secondPass = await assignExistingMerchants({
+          data: { transactions: finalTransactions },
+        })
+        finalTransactions = secondPass.transactions
+        totalAutoAssigned = secondPass.autoAssignedCount
       } catch (err) {
         // AI is optional — if it fails, continue without suggestions
         console.error('AI suggestion error:', err)
-        setAiSuggestions([])
       }
+    }
+
+    setPipelineTransactions(finalTransactions)
+    setAutoAssignedCount(totalAutoAssigned)
+
+    // Collect pending merchants that matched any import transaction
+    const pendingIds = new Set<number>()
+    for (const txn of finalTransactions) {
+      if (txn.merchantStatus === 'pending' && txn.merchantId) {
+        pendingIds.add(txn.merchantId)
+      }
+    }
+
+    // Build pending merchant info from the transaction data
+    const pendingMap = new Map<number, PendingMerchant>()
+    for (const txn of finalTransactions) {
+      if (txn.merchantStatus === 'pending' && txn.merchantId && !pendingMap.has(txn.merchantId)) {
+        // We have the ID and name from the transaction — patterns will be fetched from AI result
+        // For now we store minimal info; the full pending merchant data comes from the second pass
+        pendingMap.set(txn.merchantId, {
+          id: txn.merchantId,
+          name: txn.merchantName ?? 'Unknown',
+          defaultCategory: txn.category ?? null,
+          status: 'pending',
+          modifiesMerchantId: null,
+          patterns: [],
+        })
+      }
+    }
+
+    // We need the full pending merchant data — fetch it from the server
+    if (pendingIds.size > 0) {
+      // The pending merchants were created by requestAISuggestions and saved to DB
+      // Re-fetch them to get full data including patterns
+      const allPending = await getPendingMerchants()
+      const relevantPending = allPending.filter((pm) => pendingIds.has(pm.id))
+      setPendingMerchants(relevantPending)
+    } else {
+      setPendingMerchants([])
     }
 
     setLoading(false)
@@ -337,63 +316,35 @@ function ImportPage() {
 
   // ── Step 3: Merchant review handlers ──────────────────────────────
 
-  const handleApproveSuggestion = useCallback(
-    (approved: AISuggestion) => {
-      // Store for commit
-      if (approved.type === 'modify' && approved.existingMerchantName) {
-        setApprovedModify((prev) => [
-          ...prev,
-          {
-            existingMerchantName: approved.existingMerchantName!,
-            patterns: approved.patterns,
-          },
-        ])
-      } else {
-        setApprovedNew((prev) => [
-          ...prev,
-          {
-            name: approved.name,
-            patterns: approved.patterns,
-            defaultCategory: approved.defaultCategory || null,
-          },
-        ])
-      }
-
-      // Apply patterns to in-memory transactions
-      setPipelineTransactions((prev) =>
-        prev.map((txn) => {
-          if (txn.merchantId) return txn // already assigned
-          if (matchesAnyPattern(txn.description, approved.patterns)) {
-            return {
-              ...txn,
-              merchantId: -1, // placeholder — resolved at commit
-              merchantName: approved.type === 'modify' ? approved.existingMerchantName! : approved.name,
-              category: txn.category ?? approved.defaultCategory ?? null,
-            }
-          }
-          return txn
-        }),
-      )
-
-      // Remove from suggestions
-      setAiSuggestions((prev) => prev.filter((s) => s !== approved))
-    },
-    [],
-  )
-
-  const handleDeclineSuggestion = useCallback((index: number) => {
-    setAiSuggestions((prev) => prev.filter((_, i) => i !== index))
+  const handleConfirmMerchant = useCallback((id: number) => {
+    setConfirmedMerchantIds((prev) => new Set([...prev, id]))
+    setSkippedMerchantIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
   }, [])
 
-  const handleApproveAll = useCallback(() => {
-    for (const s of aiSuggestions) {
-      handleApproveSuggestion(s)
-    }
-  }, [aiSuggestions, handleApproveSuggestion])
-
-  const handleDeclineAll = useCallback(() => {
-    setAiSuggestions([])
+  const handleSkipMerchant = useCallback((id: number) => {
+    setSkippedMerchantIds((prev) => new Set([...prev, id]))
+    setConfirmedMerchantIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
   }, [])
+
+  const handleConfirmAll = useCallback(() => {
+    const allIds = new Set(pendingMerchants.map((pm) => pm.id))
+    setConfirmedMerchantIds(allIds)
+    setSkippedMerchantIds(new Set())
+  }, [pendingMerchants])
+
+  const handleSkipAll = useCallback(() => {
+    const allIds = new Set(pendingMerchants.map((pm) => pm.id))
+    setSkippedMerchantIds(allIds)
+    setConfirmedMerchantIds(new Set())
+  }, [pendingMerchants])
 
   // ── Step 3 → 4 transition ────────────────────────────────────────
 
@@ -417,15 +368,14 @@ function ImportPage() {
     const result = await commitImport({
       data: {
         transactions: reviewTransactions,
-        newMerchants: approvedNew,
-        modifiedMerchants: approvedModify,
+        confirmedMerchantIds: Array.from(confirmedMerchantIds),
       },
     })
 
     setCommitResult(result)
     setLoading(false)
     setStep('done')
-  }, [reviewTransactions, approvedNew, approvedModify])
+  }, [reviewTransactions, confirmedMerchantIds])
 
   // ── Reset ─────────────────────────────────────────────────────────
 
@@ -437,9 +387,9 @@ function ImportPage() {
     setTotalParsed(0)
     setPipelineTransactions([])
     setAutoAssignedCount(0)
-    setAiSuggestions([])
-    setApprovedNew([])
-    setApprovedModify([])
+    setPendingMerchants([])
+    setConfirmedMerchantIds(new Set())
+    setSkippedMerchantIds(new Set())
     setReviewTransactions([])
     setCommitResult(null)
   }, [])
@@ -587,28 +537,28 @@ function ImportPage() {
             </p>
           </div>
 
-          {/* AI Suggestions */}
-          {aiSuggestions.length > 0 && (
+          {/* Pending Merchants */}
+          {pendingMerchants.length > 0 && (
             <div className="bg-white rounded-lg border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-base font-semibold">AI Suggestions</h3>
+                  <h3 className="text-base font-semibold">Pending Merchants</h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Review AI-suggested merchants. Approve to create/modify, or decline to skip.
+                    AI-suggested merchants that matched import transactions. Confirm to make permanent, or skip to leave pending.
                   </p>
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={handleApproveAll}
+                    onClick={handleConfirmAll}
                     className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700"
                   >
-                    Approve All
+                    Confirm All
                   </button>
                   <button
-                    onClick={handleDeclineAll}
+                    onClick={handleSkipAll}
                     className="px-3 py-1.5 rounded border border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50"
                   >
-                    Decline All
+                    Skip All
                   </button>
                 </div>
               </div>
@@ -619,31 +569,31 @@ function ImportPage() {
                       <th className="px-3 py-2">Name</th>
                       <th className="px-3 py-2">Patterns</th>
                       <th className="px-3 py-2">Category</th>
-                      <th className="px-3 py-2 text-right">Matches</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {aiSuggestions.map((s, i) => (
-                      <ImportAISuggestionRow
-                        key={`${s.name}-${i}`}
-                        suggestion={s}
-                        onApprove={handleApproveSuggestion}
-                        onDecline={() => handleDeclineSuggestion(i)}
-                      />
-                    ))}
+                    {pendingMerchants
+                      .filter((pm) => !skippedMerchantIds.has(pm.id))
+                      .map((pm) => (
+                        <PendingMerchantRow
+                          key={pm.id}
+                          merchant={pm}
+                          isConfirmed={confirmedMerchantIds.has(pm.id)}
+                          onConfirm={handleConfirmMerchant}
+                          onSkip={handleSkipMerchant}
+                        />
+                      ))}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          {aiSuggestions.length === 0 && (
+          {pendingMerchants.length === 0 && (
             <div className="bg-white rounded-lg border border-slate-200 p-6">
               <p className="text-sm text-slate-500">
-                {approvedNew.length + approvedModify.length > 0
-                  ? `All suggestions resolved. ${approvedNew.length} new merchant${approvedNew.length !== 1 ? 's' : ''} and ${approvedModify.length} modification${approvedModify.length !== 1 ? 's' : ''} approved.`
-                  : 'No AI suggestions available.'}
+                All transactions matched existing merchants. No pending merchants to review.
               </p>
             </div>
           )}
@@ -657,13 +607,7 @@ function ImportPage() {
             </button>
             <button
               onClick={handleContinueToReview}
-              disabled={aiSuggestions.length > 0}
-              className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-              title={
-                aiSuggestions.length > 0
-                  ? 'Approve or decline all AI suggestions before continuing'
-                  : ''
-              }
+              className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
             >
               Continue &mdash; Review Transactions
             </button>
@@ -805,20 +749,12 @@ function ImportPage() {
                   <span className="text-slate-600">skipped</span>
                 </div>
               )}
-              {commitResult.merchantsCreated > 0 && (
+              {commitResult.merchantsConfirmed > 0 && (
                 <div>
                   <span className="text-blue-700 font-medium">
-                    {commitResult.merchantsCreated}
+                    {commitResult.merchantsConfirmed}
                   </span>{' '}
-                  <span className="text-slate-600">merchants created</span>
-                </div>
-              )}
-              {commitResult.merchantsModified > 0 && (
-                <div>
-                  <span className="text-amber-700 font-medium">
-                    {commitResult.merchantsModified}
-                  </span>{' '}
-                  <span className="text-slate-600">merchants modified</span>
+                  <span className="text-slate-600">merchants confirmed</span>
                 </div>
               )}
             </div>

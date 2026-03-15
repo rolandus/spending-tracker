@@ -7,10 +7,9 @@ import type { NormalizedTransaction, PipelineTransaction } from '../importers'
 import {
   matchesAnyPattern,
   type PatternInput,
-  createMerchant,
-  addMerchantPatterns,
+  confirmMerchant,
 } from './merchants'
-import { callMerchantAI, type AISuggestion } from './ai-merchants'
+import { callMerchantAI, type PendingMerchant } from './ai-merchants'
 import {
   detectInstitutionTransaction,
   INSTITUTION_DISPLAY_NAMES,
@@ -124,10 +123,10 @@ export const assignInstitutionTransactions = createServerFn({ method: 'POST' })
 
       const detection = detectInstitutionTransaction({
         description: txn.description,
-        paymentMethod: txn.paymentMethod,
-        checkNumber: txn.checkNumber,
+        paymentMethod: txn.paymentMethod ?? null,
+        checkNumber: txn.checkNumber ?? null,
         accountType: account.type,
-        transactionType: txn.transactionType,
+        transactionType: txn.transactionType ?? 'unknown',
         amount: txn.amount,
       })
 
@@ -159,19 +158,23 @@ export const assignInstitutionTransactions = createServerFn({ method: 'POST' })
 export const assignExistingMerchants = createServerFn({ method: 'POST' })
   .inputValidator((data: { transactions: PipelineTransaction[] }) => data)
   .handler(async ({ data }) => {
-    // Load all merchants and their patterns
+    // Load all merchants (confirmed + pending) and their patterns
     const allMerchants = db.select().from(merchants).all()
     const allPatterns = db.select().from(merchantPatterns).all()
 
     // Build a lookup: merchant -> its patterns
-    const merchantRules = allMerchants.map((m) => ({
-      id: m.id,
-      name: m.name,
-      defaultCategory: m.defaultCategory,
-      patterns: allPatterns
-        .filter((p) => p.merchantId === m.id)
-        .map((p) => ({ pattern: p.pattern, matchType: p.matchType })) as PatternInput[],
-    }))
+    // Sort confirmed first so they take priority over pending
+    const merchantRules = allMerchants
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        defaultCategory: m.defaultCategory,
+        status: m.status as 'confirmed' | 'pending',
+        patterns: allPatterns
+          .filter((p) => p.merchantId === m.id)
+          .map((p) => ({ pattern: p.pattern, matchType: p.matchType })) as PatternInput[],
+      }))
+      .sort((a, b) => (a.status === 'confirmed' ? 0 : 1) - (b.status === 'confirmed' ? 0 : 1))
 
     let autoAssignedCount = 0
     const pipelineTransactions: PipelineTransaction[] = []
@@ -191,6 +194,7 @@ export const assignExistingMerchants = createServerFn({ method: 'POST' })
             ...txn,
             merchantId: rule.id,
             merchantName: rule.name,
+            merchantStatus: rule.status,
             category: txn.category ?? rule.defaultCategory ?? null,
           })
           autoAssignedCount++
@@ -230,77 +234,57 @@ export const requestAISuggestions = createServerFn({ method: 'POST' })
   )
   .handler(async ({ data }) => {
     if (data.descriptions.length === 0) {
-      return { suggestions: [] as AISuggestion[], fromCache: false }
+      return { suggestions: [], pendingMerchants: [] as PendingMerchant[] }
     }
-    return callMerchantAI({ data: { descriptions: data.descriptions, skipCache: true } })
+    return callMerchantAI({ data: { descriptions: data.descriptions } })
   })
 
 // ── Step 4: Commit Import ────────────────────────────────────────────
-
-type ApprovedNewMerchant = {
-  name: string
-  patterns: PatternInput[]
-  defaultCategory: string | null
-}
-
-type ApprovedModification = {
-  existingMerchantName: string
-  patterns: PatternInput[]
-}
 
 export const commitImport = createServerFn({ method: 'POST' })
   .inputValidator(
     (data: {
       transactions: PipelineTransaction[]
-      newMerchants: ApprovedNewMerchant[]
-      modifiedMerchants: ApprovedModification[]
+      confirmedMerchantIds: number[]
     }) => data,
   )
   .handler(async ({ data }) => {
-    let merchantsCreated = 0
-    let merchantsModified = 0
+    let merchantsConfirmed = 0
 
-    // 1. Create new merchants (captures real IDs)
-    const nameToIdMap = new Map<string, number>()
-    for (const nm of data.newMerchants) {
-      const result = await createMerchant({
-        data: {
-          name: nm.name,
-          patterns: nm.patterns,
-          defaultCategory: nm.defaultCategory,
-        },
-      })
-      nameToIdMap.set(nm.name, result.merchant.id)
-      merchantsCreated++
-    }
-
-    // 2. Add patterns to existing merchants
-    for (const mod of data.modifiedMerchants) {
-      const existing = db
-        .select()
-        .from(merchants)
-        .where(eq(merchants.name, mod.existingMerchantName))
-        .get()
-
-      if (existing) {
-        await addMerchantPatterns({
-          data: { merchantId: existing.id, patterns: mod.patterns },
-        })
-        nameToIdMap.set(mod.existingMerchantName, existing.id)
-        merchantsModified++
+    // 1. Confirm pending merchants that the user approved
+    for (const pendingId of data.confirmedMerchantIds) {
+      const result = await confirmMerchant({ data: { id: pendingId } })
+      if (result.success) {
+        merchantsConfirmed++
       }
     }
 
-    // 3. Insert transactions
+    // 2. Insert transactions
     let inserted = 0
     let skipped = 0
     const errors: string[] = []
 
     for (const txn of data.transactions) {
-      // Resolve merchant ID: use real DB ID if merchant was just created/modified
+      // For transactions assigned to a pending merchant that was confirmed via "modify",
+      // confirmMerchant already merged it into the target. Resolve the final merchantId.
       let finalMerchantId = txn.merchantId
-      if (txn.merchantName && (!finalMerchantId || finalMerchantId === -1)) {
-        finalMerchantId = nameToIdMap.get(txn.merchantName) ?? null
+      if (finalMerchantId) {
+        // Check if this merchant still exists (it may have been merged into a target)
+        const exists = db.select({ id: merchants.id }).from(merchants).where(eq(merchants.id, finalMerchantId)).get()
+        if (!exists) {
+          // The pending merchant was merged — look up what target it pointed to
+          // The transactions were already reassigned by confirmMerchant, so we can skip
+          // the merchantId lookup. But for import transactions not yet in DB, we need
+          // to find the right target. Query by merchant name.
+          if (txn.merchantName) {
+            const target = db.select({ id: merchants.id }).from(merchants)
+              .where(eq(merchants.name, txn.merchantName))
+              .get()
+            finalMerchantId = target?.id ?? null
+          } else {
+            finalMerchantId = null
+          }
+        }
       }
 
       try {
@@ -339,5 +323,5 @@ export const commitImport = createServerFn({ method: 'POST' })
       }
     }
 
-    return { inserted, skipped, errors, merchantsCreated, merchantsModified }
+    return { inserted, skipped, errors, merchantsConfirmed }
   })

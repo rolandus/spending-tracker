@@ -1,0 +1,338 @@
+{
+  "suggestions": [
+    {
+      "name": "Cenex",
+      "patterns": [
+        {
+          "pattern": "CENEX",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Gas/Automotive",
+      "matchedDescriptions": [
+        "CENEX-PREMIER COOPERMOUNT HOREB         WI",
+        "CENEX-PREMIER COOP",
+        "CENEX-PREMIER COOP  MOUNT HOREB         WI"
+      ]
+    },
+    {
+      "name": "Kwik Trip",
+      "patterns": [
+        {
+          "pattern": "KWIK TRIP",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Gas/Automotive",
+      "matchedDescriptions": [
+        "KWIK TRIP           MOUNT HOREB         WI",
+        "KWIK TRIP #794",
+        "KWIK TRIP #1130 0001MOUNT HOREB         WI",
+        "KWIK TRIP #1130 1130MOUNT HOREB         WI",
+        "KWIK TRIP #1130",
+        "KWIK TRIP #960 960  MADISON             WI",
+        "KWIK TRIP #834",
+        "KWIK TRIP #1141 0001LUXEMBURG           WI",
+        "KWIK TRIP #959 959  FITCHBURG           WI",
+        "KWIK TRIP #953 0001 MADISON             WI",
+        "KWIK TRIP #691",
+        "KWIK TRIP #617",
+        "KWIK TRIP #1508",
+        "KWIK TRIP           STEVENS POINT       WI",
+        "KWIK TRIP           OCONOMOWOK          WI"
+      ]
+    },
+    {
+      "name": "Mt Horeb Lumber",
+      "patterns": [
+        {
+          "pattern": "MT HOREB LUMBER",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Home Improvement",
+      "matchedDescriptions": [
+        "MT HOREB LUMBER",
+        "MT HOREB LUMBER 0000MT HOREB            WI"
+      ]
+    },
+    {
+      "name": "Aldi",
+      "patterns": [
+        {
+          "pattern": "ALDI ",
+          "matchType": "starts_with"
+        }
+      ],
+      "defaultCategory": "Groceries",
+      "matchedDescriptions": [
+        "ALDI 64004 6400     FITCHBURG           WI",
+        "ALDI 64004 64004    FITCHBURG           WI",
+        "ALDI 64022 6402     MADISON             WI",
+        "ALDI 64022 000000000MADISON             WI",
+        "ALDI 64004 000000000FITCHBURG           WI"
+      ]
+    },
+    {
+      "name": "Culvers",
+      "patterns": [
+        {
+          "pattern": "CULVERS",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Dining",
+      "matchedDescriptions": [
+        "CULVERS OF MOUNT HOREB",
+        "CULVER'S OF MONROE  MONROE              WI",
+        "CULVERS OF ROCKFORD 198",
+        "CULVERS OF DODGEVILLE",
+        "CULVERS OF CROSS PLAINS",
+        "CULVERS JANESVILLE 5JANESVILLE          WI",
+        "CULVERS",
+        "CULVERS OLO MOUNT HOREB",
+        "CULVERS OF VERONA",
+        "CULVERS OF PLATTEVILLE",
+        "CULVERS OF NEW GLARUNEW GLARUS          WI",
+        "CULVERS OF MOUNT HORMOUNT HOREB         WI",
+        "CULVERS OF MONROE",
+        "CULVERS OF MCFARLAND",
+        "CULVERS OF BELOIT",
+        "CULVERS JANESVILLE 555",
+        "CULVERS EDGERTON 281EDGERTON            WI",
+        "CULVERS DEFOREST 2",
+        "CULVERS BARABOO"
+      ]
+    },
+    {
+      "name": "Menards",
+      "patterns": [
+        {
+          "pattern": "MENARDS",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Home Improvement",
+      "matchedDescriptions": [
+        "MENARDS MADISON WEST WI",
+        "MENARDS PLOVER WI",
+        "MENARDS.COM",
+        "MENARDS MONONA WI"
+      ]
+    },
+    {
+      "name": "Homeschool Connections",
+      "patterns": [
+        {
+          "pattern": "HOMESCHOOL CONNECTIONS",
+          "matchType": "exact"
+        }
+      ],
+      "defaultCategory": "Education",
+      "matchedDescriptions": [
+        "HOMESCHOOL CONNECTIONS"
+      ]
+    },
+    {
+      "name": "Compassion International",
+      "patterns": [
+        {
+          "pattern": "COMPASSION INTERNATION",
+          "matchType": "starts_with"
+        }
+      ],
+      "defaultCategory": "Gifts/Donations",
+      "matchedDescriptions": [
+        "COMPASSION INTERNATION"
+      ]
+    },
+    {
+      "name": "Holy Cross",
+      "patterns": [
+        {
+          "pattern": "Holy Cross",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Gifts/Donations",
+      "matchedDescriptions": [
+        "Holy Cross Congr Holy Cross",
+        "HOLY CROSS PASTORATE",
+        "HOLY CROSS PARISH"
+      ]
+    },
+    {
+      "name": "Brix Cider",
+      "patterns": [
+        {
+          "pattern": "SQ *BRIX CIDER",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Dining",
+      "matchedDescriptions": [
+        "SQ *BRIX CIDER LLC"
+      ]
+    },
+    {
+      "name": "Google One",
+      "patterns": [
+        {
+          "pattern": "GOOGLE *Google One",
+          "matchType": "contains"
+        },
+        {
+          "pattern": "Google One",
+          "matchType": "exact"
+        }
+      ],
+      "defaultCategory": "Subscriptions",
+      "matchedDescriptions": [
+        "GOOGLE *Google One",
+        "Google One"
+      ]
+    },
+    {
+      "name": "State Farm",
+      "patterns": [
+        {
+          "pattern": "STATE FARM",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Insurance",
+      "matchedDescriptions": [
+        "STATE FARM RO 27 SFPP 05 S XXXXXX2905",
+        "STATE FARM RO 27 CPC-CLIENT 05 J XXXXXX2755",
+        "STATE FARM BILLG PAYMENTS L996Z0AX-1",
+        "STATE FARM BILLG PAYMENTS L996V8KP-1",
+        "STATE FARM BILLG PAYMENTS L996K2W2-1"
+      ]
+    },
+    {
+      "name": "Sallie Mae",
+      "patterns": [
+        {
+          "pattern": "SALLIE MAE",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Education",
+      "matchedDescriptions": [
+        "SALLIE MAE BANK AUTOPAY CS_Roland Scott"
+      ]
+    },
+    {
+      "name": "Mt Horeb Telecom",
+      "patterns": [
+        {
+          "pattern": "Mt Horeb Telecom",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Internet/Phone",
+      "matchedDescriptions": [
+        "Mt Horeb Telecom MH Payment XXXXX163-2"
+      ]
+    },
+    {
+      "name": "Kubota Credit",
+      "patterns": [
+        {
+          "pattern": "KUBOTA CREDIT",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Fees/Interest",
+      "matchedDescriptions": [
+        "KUBOTA CREDIT PAYMENT 88272315"
+      ]
+    },
+    {
+      "name": "Village of Mt Horeb",
+      "patterns": [
+        {
+          "pattern": "VILL OF MT HOREB",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Utilities",
+      "matchedDescriptions": [
+        "VILL OF MT HOREB UTILITY DD 000000004528-16"
+      ]
+    },
+    {
+      "name": "Aztlan Mexican Grill",
+      "patterns": [
+        {
+          "pattern": "AZTLAN MEXICAN GRILL",
+          "matchType": "exact"
+        }
+      ],
+      "defaultCategory": "Dining",
+      "matchedDescriptions": [
+        "AZTLAN MEXICAN GRILL"
+      ]
+    },
+    {
+      "name": "Costco",
+      "patterns": [
+        {
+          "pattern": "COSTCO",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Shopping",
+      "matchedDescriptions": [
+        "COSTCO WHSE#1491",
+        "COSTCO *ANNUAL RENEWAL"
+      ]
+    },
+    {
+      "name": "Unbound",
+      "patterns": [
+        {
+          "pattern": "UNBOUND DONATION",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Gifts/Donations",
+      "matchedDescriptions": [
+        "UNBOUND DONATION ASC541201"
+      ]
+    },
+    {
+      "name": "Capitol Bank",
+      "patterns": [
+        {
+          "pattern": "AUTO PAY CAPITOL BANK",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Fees/Interest",
+      "matchedDescriptions": [
+        "AUTO PAY CAPITOL BANK CAPITOL BANK LOAN PAYMENT"
+      ]
+    },
+    {
+      "name": "UWH HL MyChart",
+      "patterns": [
+        {
+          "pattern": "UWH HL MYCHART",
+          "matchType": "contains"
+        },
+        {
+          "pattern": "MYCHART",
+          "matchType": "contains"
+        }
+      ],
+      "defaultCategory": "Health Care",
+      "matchedDescriptions": [
+        "UWH HL MYCHART",
+        "UWH HL PATIENT PRESENT",
+        "MYCHART SSM HLTH MED OK",
+        "MYCHART SSMH HOSPITAL"
+      ]
+    }
+  ]
+}

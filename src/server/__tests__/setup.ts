@@ -64,6 +64,8 @@ export function createTestDb() {
       id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
       name text NOT NULL,
       default_category text,
+      status text DEFAULT 'confirmed' NOT NULL,
+      modifies_merchant_id integer REFERENCES merchants(id),
       created_at text DEFAULT (datetime('now')) NOT NULL
     );
 

@@ -74,6 +74,12 @@ export const merchants = sqliteTable('merchants', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   defaultCategory: text('default_category'),
+  status: text('status', { enum: ['confirmed', 'pending'] })
+    .notNull()
+    .default('confirmed'),
+  modifiesMerchantId: integer('modifies_merchant_id').references(
+    (): any => merchants.id,
+  ),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(datetime('now'))`),

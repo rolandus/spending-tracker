@@ -4,22 +4,27 @@ import {
   getMerchants,
   createMerchant,
   deleteMerchant,
+  confirmMerchant,
+  updateMerchant,
   applyMerchantRules,
   suggestMerchants,
   previewMerchantPatterns,
   getMerchantStats,
+  getPendingMerchants,
+  suggestMerchantsAI,
 } from '../server/functions/merchants'
-import { suggestMerchantsAI, type AISuggestion } from '../server/functions/ai-merchants'
+import type { PendingMerchant } from '../server/functions/ai-merchants'
 import { CATEGORIES } from '../shared/categories'
 
 type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
 
 export const Route = createFileRoute('/merchants')({
   loader: async () => {
-    const [merchantList, rawSuggestions, stats] = await Promise.all([
+    const [merchantList, rawSuggestions, stats, pending] = await Promise.all([
       getMerchants(),
       suggestMerchants(),
       getMerchantStats(),
+      getPendingMerchants(),
     ])
 
     // Resolve actual match counts using previewMerchantPatterns, then sort desc
@@ -34,7 +39,7 @@ export const Route = createFileRoute('/merchants')({
     )
     suggestions.sort((a, b) => b.count - a.count)
 
-    return { merchants: merchantList, suggestions, stats }
+    return { merchants: merchantList, suggestions, stats, pendingMerchants: pending }
   },
   component: MerchantsPage,
 })
@@ -209,44 +214,23 @@ function SuggestionRow({
   )
 }
 
-function AISuggestionRow({
-  suggestion,
+function PendingMerchantPageRow({
+  merchant,
   onConfirmed,
-  onDismissed,
+  onDeleted,
 }: {
-  suggestion: AISuggestion
+  merchant: PendingMerchant
   onConfirmed: () => void
-  onDismissed: () => void
+  onDeleted: () => void
 }) {
-  const [patterns, setPatterns] = useState<PatternInput[]>(suggestion.patterns)
-  const [name, setName] = useState(suggestion.name)
-  const [defaultCategory, setDefaultCategory] = useState(suggestion.defaultCategory)
-  const [liveCount, setLiveCount] = useState<number>(suggestion.count)
-  const [sampleDescs, setSampleDescs] = useState<string[]>([])
-  const [showSamples, setShowSamples] = useState(false)
+  const [name, setName] = useState(merchant.name)
+  const [patterns, setPatterns] = useState<PatternInput[]>(
+    merchant.patterns.length > 0
+      ? merchant.patterns
+      : [{ pattern: '', matchType: 'contains' }],
+  )
+  const [defaultCategory, setDefaultCategory] = useState(merchant.defaultCategory ?? '')
   const [applying, setApplying] = useState(false)
-  const initialized = useRef(false)
-
-  const patternsKey = JSON.stringify(patterns)
-
-  useEffect(() => {
-    if (!initialized.current) {
-      initialized.current = true
-      return
-    }
-    const validPatterns = patterns.filter((p) => p.pattern.trim())
-    if (validPatterns.length === 0) {
-      setLiveCount(0)
-      setSampleDescs([])
-      return
-    }
-    const timer = setTimeout(async () => {
-      const result = await previewMerchantPatterns({ data: { patterns: validPatterns } })
-      setLiveCount(result.matchCount)
-      setSampleDescs(result.sampleDescriptions)
-    }, 400)
-    return () => clearTimeout(timer)
-  }, [patternsKey])
 
   const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
     setPatterns((prev) =>
@@ -267,17 +251,24 @@ function AISuggestionRow({
     if (!name.trim() || validPatterns.length === 0) return
     setApplying(true)
     try {
-      await createMerchant({
+      await updateMerchant({
         data: {
+          id: merchant.id,
           name: name.trim(),
-          patterns: validPatterns,
           defaultCategory: defaultCategory || null,
+          patterns: validPatterns,
         },
       })
+      await confirmMerchant({ data: { id: merchant.id } })
       onConfirmed()
     } finally {
       setApplying(false)
     }
+  }
+
+  const handleDelete = async () => {
+    await deleteMerchant({ data: { id: merchant.id } })
+    onDeleted()
   }
 
   return (
@@ -290,6 +281,11 @@ function AISuggestionRow({
           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
           placeholder="Name"
         />
+        {merchant.modifiesMerchantId && (
+          <span className="block text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5 mt-1 w-fit">
+            Extends existing merchant
+          </span>
+        )}
       </td>
       <td className="px-3 py-2">
         <div className="space-y-1">
@@ -344,37 +340,19 @@ function AISuggestionRow({
         </select>
       </td>
       <td className="px-3 py-2 text-right">
-        <button
-          onClick={() => setShowSamples(!showSamples)}
-          className="tabular-nums text-sm text-blue-600 hover:text-blue-700 cursor-pointer"
-          title="Click to toggle sample descriptions"
-        >
-          {liveCount}
-        </button>
-        {showSamples && sampleDescs.length > 0 && (
-          <div className="mt-1 text-left">
-            {sampleDescs.map((d, i) => (
-              <div key={i} className="text-xs font-mono text-slate-500 truncate" title={d}>
-                {d}
-              </div>
-            ))}
-          </div>
-        )}
-      </td>
-      <td className="px-3 py-2 text-right">
         <div className="flex flex-col gap-1">
           <button
             onClick={handleConfirm}
             disabled={!name.trim() || patterns.every((p) => !p.pattern.trim()) || applying}
             className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-40"
           >
-            {applying ? 'Saving…' : 'Confirm'}
+            {applying ? 'Confirming…' : 'Confirm'}
           </button>
           <button
-            onClick={onDismissed}
-            className="px-3 py-1 rounded border border-slate-300 text-slate-500 text-xs hover:bg-slate-50"
+            onClick={handleDelete}
+            className="px-3 py-1 rounded border border-red-200 text-red-600 text-xs hover:bg-red-50"
           >
-            Dismiss
+            Delete
           </button>
         </div>
       </td>
@@ -383,7 +361,7 @@ function AISuggestionRow({
 }
 
 function MerchantsPage() {
-  const { merchants: merchantList, suggestions, stats } = Route.useLoaderData()
+  const { merchants: merchantList, suggestions, stats, pendingMerchants: initialPending } = Route.useLoaderData()
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [patterns, setPatterns] = useState<PatternInput[]>([
@@ -396,10 +374,9 @@ function MerchantsPage() {
     matchCount: number
     sampleDescriptions: string[]
   } | null>(null)
-  const [aiSuggestions, setAiSuggestions] = useState<AISuggestion[]>([])
+  const [pendingList, setPendingList] = useState<PendingMerchant[]>(initialPending)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
-  const [aiFromCache, setAiFromCache] = useState(false)
 
   // Live preview for create form
   const patternsKey = JSON.stringify(patterns)
@@ -467,8 +444,11 @@ function MerchantsPage() {
     setAiError(null)
     try {
       const result = await suggestMerchantsAI()
-      setAiSuggestions(result.suggestions)
-      setAiFromCache(result.fromCache ?? false)
+      // AI creates pending merchants — refresh the pending list
+      if (result.pendingMerchants.length > 0) {
+        const refreshed = await getPendingMerchants()
+        setPendingList(refreshed)
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'AI suggestion failed'
       setAiError(msg)
@@ -477,12 +457,15 @@ function MerchantsPage() {
     }
   }
 
-  const handleAIConfirmed = (index: number) => {
-    setAiSuggestions((prev) => prev.filter((_, i) => i !== index))
+  const handlePendingConfirmed = async () => {
+    const refreshed = await getPendingMerchants()
+    setPendingList(refreshed)
+    window.location.reload()
   }
 
-  const handleAIDismissed = (index: number) => {
-    setAiSuggestions((prev) => prev.filter((_, i) => i !== index))
+  const handlePendingDeleted = async () => {
+    const refreshed = await getPendingMerchants()
+    setPendingList(refreshed)
   }
 
   const handleApplyAll = async () => {
@@ -541,14 +524,21 @@ function MerchantsPage() {
         </div>
       </div>
 
-      {/* AI Suggestions */}
+      {/* Pending Merchants */}
       <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold">AI-Assisted Merchant Creation</h2>
+              <h2 className="text-lg font-semibold">
+                Pending Merchants
+                {pendingList.length > 0 && (
+                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                    {pendingList.length}
+                  </span>
+                )}
+              </h2>
               <p className="text-sm text-slate-500 mt-1">
-                Send transaction descriptions to AI for automatic merchant grouping and pattern suggestions.
+                AI-suggested merchants awaiting confirmation. Confirm to make permanent, or delete to remove.
               </p>
             </div>
             <button
@@ -574,34 +564,31 @@ function MerchantsPage() {
           </div>
         )}
 
-        {aiFromCache && aiSuggestions.length > 0 && (
-          <div className="px-6 py-2 bg-amber-50 border-b border-amber-100 text-sm text-amber-700">
-            Loaded from cache (<code className="text-xs">ai-suggestions-cache.json</code>). Delete or rename the file to fetch fresh suggestions from the API.
-          </div>
-        )}
-
-        {aiSuggestions.length > 0 && (
+        {pendingList.length > 0 ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-violet-50">
+              <tr className="border-b border-slate-200 bg-amber-50">
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Name</th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Patterns</th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Category</th>
-                <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Count</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Action</th>
               </tr>
             </thead>
             <tbody>
-              {aiSuggestions.map((s, i) => (
-                <AISuggestionRow
-                  key={`${s.name}-${i}`}
-                  suggestion={s}
-                  onConfirmed={() => handleAIConfirmed(i)}
-                  onDismissed={() => handleAIDismissed(i)}
+              {pendingList.map((pm) => (
+                <PendingMerchantPageRow
+                  key={pm.id}
+                  merchant={pm}
+                  onConfirmed={handlePendingConfirmed}
+                  onDeleted={handlePendingDeleted}
                 />
               ))}
             </tbody>
           </table>
+        ) : (
+          <div className="px-6 py-4 text-sm text-slate-500">
+            No pending merchants. Use &ldquo;Suggest with AI&rdquo; to analyze unassigned transactions.
+          </div>
         )}
       </div>
 
@@ -750,7 +737,9 @@ function MerchantsPage() {
       {/* Merchants table */}
       <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200">
-          <h2 className="text-lg font-semibold">Merchants ({merchantList.length})</h2>
+          <h2 className="text-lg font-semibold">
+            Confirmed Merchants ({merchantList.filter((m) => m.status === 'confirmed').length})
+          </h2>
         </div>
         {merchantList.length === 0 ? (
           <div className="px-6 py-8 text-center text-slate-500">

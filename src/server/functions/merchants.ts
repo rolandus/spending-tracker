@@ -1,11 +1,39 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
 import { merchants, merchantPatterns, transactions } from '../db/schema'
-import { eq, sql, desc, isNull, and } from 'drizzle-orm'
+import { eq, sql, desc, isNull, and, lt, notInArray } from 'drizzle-orm'
 
 export type { PatternInput } from '../../shared/pattern-matching'
 export { matchesPattern, matchesAnyPattern } from '../../shared/pattern-matching'
 import type { PatternInput } from '../../shared/pattern-matching'
+
+/**
+ * Get all pending merchants with their patterns.
+ */
+export const getPendingMerchants = createServerFn({ method: 'GET' }).handler(async () => {
+  const rows = db
+    .select()
+    .from(merchants)
+    .where(eq(merchants.status, 'pending'))
+    .orderBy(merchants.name)
+    .all()
+
+  const patterns = db.select().from(merchantPatterns).all()
+
+  return rows.map((m) => ({
+    id: m.id,
+    name: m.name,
+    defaultCategory: m.defaultCategory,
+    status: 'pending' as const,
+    modifiesMerchantId: m.modifiesMerchantId,
+    patterns: patterns
+      .filter((p) => p.merchantId === m.id)
+      .map((p) => ({
+        pattern: p.pattern,
+        matchType: p.matchType as 'contains' | 'starts_with' | 'exact',
+      })),
+  }))
+})
 
 /**
  * List all merchants with their patterns and transaction counts.
@@ -296,6 +324,86 @@ export const addMerchantPatterns = createServerFn({ method: 'POST' })
     return { matched: result.changes }
   })
 
+/**
+ * Confirm a pending merchant — either promote it (new) or merge patterns into the target (modify).
+ */
+export const confirmMerchant = createServerFn({ method: 'POST' })
+  .inputValidator((data: { id: number }) => data)
+  .handler(async ({ data }) => {
+    const pending = db.select().from(merchants).where(eq(merchants.id, data.id)).get()
+    if (!pending || pending.status !== 'pending') {
+      return { success: false, error: 'Merchant not found or not pending' }
+    }
+
+    const pendingPatterns = db
+      .select()
+      .from(merchantPatterns)
+      .where(eq(merchantPatterns.merchantId, pending.id))
+      .all()
+      .map((p) => ({ pattern: p.pattern, matchType: p.matchType as 'contains' | 'starts_with' | 'exact' }))
+
+    if (pending.modifiesMerchantId) {
+      // "modify" type — merge patterns into the target merchant
+      const target = db.select().from(merchants).where(eq(merchants.id, pending.modifiesMerchantId)).get()
+      if (!target) {
+        return { success: false, error: 'Target merchant not found' }
+      }
+
+      // Copy patterns to target
+      for (const p of pendingPatterns) {
+        db.insert(merchantPatterns)
+          .values({
+            merchantId: target.id,
+            pattern: p.pattern,
+            matchType: p.matchType,
+          })
+          .run()
+      }
+
+      // Reassign transactions from pending → target
+      db.run(
+        sql`UPDATE transactions SET merchant_id = ${target.id} WHERE merchant_id = ${pending.id}`,
+      )
+
+      // Apply new patterns to unassigned transactions
+      const whereClause = buildMultiPatternWhere(pendingPatterns)
+      if (whereClause) {
+        db.run(
+          sql`UPDATE transactions SET merchant_id = ${target.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
+        )
+      }
+
+      // Delete the pending merchant and its patterns
+      db.delete(merchantPatterns).where(eq(merchantPatterns.merchantId, pending.id)).run()
+      db.delete(merchants).where(eq(merchants.id, pending.id)).run()
+
+      return { success: true, merchantId: target.id, merged: true }
+    } else {
+      // "new" type — promote to confirmed
+      db.update(merchants)
+        .set({ status: 'confirmed' })
+        .where(eq(merchants.id, pending.id))
+        .run()
+
+      // Apply patterns to unassigned transactions
+      const whereClause = buildMultiPatternWhere(pendingPatterns)
+      if (whereClause) {
+        db.run(
+          sql`UPDATE transactions SET merchant_id = ${pending.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
+        )
+
+        // Categorize if default category is set
+        if (pending.defaultCategory) {
+          db.run(
+            sql`UPDATE transactions SET category = ${pending.defaultCategory} WHERE merchant_id = ${pending.id} AND category IS NULL AND ignored = 0`,
+          )
+        }
+      }
+
+      return { success: true, merchantId: pending.id, merged: false }
+    }
+  })
+
 export function buildLikePattern(
   pattern: string,
   matchType: 'contains' | 'starts_with' | 'exact',
@@ -309,3 +417,35 @@ export function buildLikePattern(
       return pattern
   }
 }
+
+/**
+ * Standalone server function for the merchants page.
+ * Uses expense-only filtering.
+ */
+export const suggestMerchantsAI = createServerFn({ method: 'POST' }).handler(
+  async () => {
+    const descriptions = db
+      .select({
+        description: transactions.description,
+        count: sql<number>`count(*)`,
+      })
+      .from(transactions)
+      .where(
+        and(
+          isNull(transactions.merchantId),
+          eq(transactions.ignored, 0),
+          lt(transactions.amount, 0),
+          notInArray(transactions.transactionType, [
+            'internal_transfer',
+            'cc_payment',
+          ]),
+        ),
+      )
+      .groupBy(transactions.description)
+      .orderBy(sql`count(*) DESC`)
+      .all()
+
+    const { callMerchantAI } = await import('./ai-merchants')
+    return callMerchantAI({ data: { descriptions } })
+  },
+)

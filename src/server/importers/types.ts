@@ -21,6 +21,7 @@ export type ImporterFn = (
 export type PipelineTransaction = NormalizedTransaction & {
   merchantId: number | null
   merchantName: string | null
+  merchantStatus?: 'confirmed' | 'pending'
 }
 
 /**

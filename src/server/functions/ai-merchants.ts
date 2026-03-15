@@ -1,15 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
-import { merchants, merchantPatterns, transactions } from '../db/schema'
-import { sql, isNull, and, lt, notInArray, eq } from 'drizzle-orm'
-import { buildMultiPatternWhere, type PatternInput } from './merchants'
+import { merchants, merchantPatterns } from '../db/schema'
+import { and, eq } from 'drizzle-orm'
+import { type PatternInput } from './merchants'
 import { CATEGORIES } from '../../shared/categories'
-
-function getAICachePath() {
-  const path = require('node:path')
-  return path.join(process.cwd(), 'ai-suggestions-cache.json')
-}
 
 export type AISuggestion = {
   type: 'new' | 'modify'
@@ -18,7 +13,15 @@ export type AISuggestion = {
   patterns: PatternInput[]
   defaultCategory: string
   matchedDescriptions: string[]
-  count: number
+}
+
+export type PendingMerchant = {
+  id: number
+  name: string
+  defaultCategory: string | null
+  status: 'pending'
+  modifiesMerchantId: number | null
+  patterns: PatternInput[]
 }
 
 const TOOL_SCHEMA = {
@@ -112,177 +115,264 @@ type RawSuggestion = {
   matchedDescriptions: string[]
 }
 
+// ── Save AI Suggestions as Pending Merchants ─────────────────────────
+
 /**
- * Core AI function — reusable by both the standalone merchants page and the import pipeline.
+ * Persist AI suggestions as pending merchants in the database.
+ * Deduplicates by name (for "new") or modifiesMerchantId (for "modify").
+ */
+export function saveSuggestionsAsPending(
+  suggestions: AISuggestion[],
+): PendingMerchant[] {
+  const created: PendingMerchant[] = []
+
+  for (const s of suggestions) {
+    const patterns: PatternInput[] = s.patterns.filter((p) => p.pattern.trim())
+
+    if (s.type === 'modify' && s.existingMerchantName) {
+      // Look up the target confirmed merchant
+      const target = db
+        .select()
+        .from(merchants)
+        .where(
+          and(
+            eq(merchants.name, s.existingMerchantName),
+            eq(merchants.status, 'confirmed'),
+          ),
+        )
+        .get()
+
+      if (!target) continue // Target doesn't exist, skip
+
+      // Check for existing pending modification of this target
+      const existing = db
+        .select()
+        .from(merchants)
+        .where(
+          and(
+            eq(merchants.status, 'pending'),
+            eq(merchants.modifiesMerchantId, target.id),
+          ),
+        )
+        .get()
+
+      if (existing) {
+        // Already have a pending modification for this target — return existing
+        const existingPatterns = db
+          .select()
+          .from(merchantPatterns)
+          .where(eq(merchantPatterns.merchantId, existing.id))
+          .all()
+        created.push({
+          id: existing.id,
+          name: existing.name,
+          defaultCategory: existing.defaultCategory,
+          status: 'pending',
+          modifiesMerchantId: existing.modifiesMerchantId,
+          patterns: existingPatterns.map((p) => ({
+            pattern: p.pattern,
+            matchType: p.matchType as PatternInput['matchType'],
+          })),
+        })
+        continue
+      }
+
+      // Create pending modification merchant
+      const merchant = db
+        .insert(merchants)
+        .values({
+          name: s.name,
+          defaultCategory: s.defaultCategory || null,
+          status: 'pending',
+          modifiesMerchantId: target.id,
+        })
+        .returning()
+        .get()
+
+      for (const p of patterns) {
+        db.insert(merchantPatterns)
+          .values({
+            merchantId: merchant.id,
+            pattern: p.pattern,
+            matchType: p.matchType,
+          })
+          .run()
+      }
+
+      created.push({
+        id: merchant.id,
+        name: merchant.name,
+        defaultCategory: merchant.defaultCategory,
+        status: 'pending',
+        modifiesMerchantId: merchant.modifiesMerchantId,
+        patterns,
+      })
+    } else {
+      // "new" type
+      // Check for existing pending merchant with same name
+      const existing = db
+        .select()
+        .from(merchants)
+        .where(
+          and(eq(merchants.name, s.name), eq(merchants.status, 'pending')),
+        )
+        .get()
+
+      if (existing) {
+        // Already have a pending merchant with this name — return existing
+        const existingPatterns = db
+          .select()
+          .from(merchantPatterns)
+          .where(eq(merchantPatterns.merchantId, existing.id))
+          .all()
+        created.push({
+          id: existing.id,
+          name: existing.name,
+          defaultCategory: existing.defaultCategory,
+          status: 'pending',
+          modifiesMerchantId: existing.modifiesMerchantId,
+          patterns: existingPatterns.map((p) => ({
+            pattern: p.pattern,
+            matchType: p.matchType as PatternInput['matchType'],
+          })),
+        })
+        continue
+      }
+
+      // Create new pending merchant
+      const merchant = db
+        .insert(merchants)
+        .values({
+          name: s.name,
+          defaultCategory: s.defaultCategory || null,
+          status: 'pending',
+          modifiesMerchantId: null,
+        })
+        .returning()
+        .get()
+
+      for (const p of patterns) {
+        db.insert(merchantPatterns)
+          .values({
+            merchantId: merchant.id,
+            pattern: p.pattern,
+            matchType: p.matchType,
+          })
+          .run()
+      }
+
+      created.push({
+        id: merchant.id,
+        name: merchant.name,
+        defaultCategory: merchant.defaultCategory,
+        status: 'pending',
+        modifiesMerchantId: null,
+        patterns,
+      })
+    }
+  }
+
+  return created
+}
+
+// ── Core AI Function ─────────────────────────────────────────────────
+
+/**
+ * Call Claude to analyze transaction descriptions and suggest merchant groupings.
+ * Results are automatically saved as pending merchants in the database.
  */
 export const callMerchantAI = createServerFn({ method: 'POST' })
   .inputValidator(
     (data: {
       descriptions: { description: string; count: number }[]
-      skipCache?: boolean
     }) => data,
   )
-  .handler(async ({ data }): Promise<{ suggestions: AISuggestion[]; fromCache: boolean }> => {
+  .handler(async ({ data }): Promise<{ suggestions: AISuggestion[]; pendingMerchants: PendingMerchant[] }> => {
     const { descriptions } = data
-    const options = { skipCache: data.skipCache };
-  // 0. Check cache (unless skipCache is set)
-  if (!options?.skipCache) {
-    const fs = require('node:fs')
-    const cachePath = getAICachePath()
-    if (fs.existsSync(cachePath)) {
-      const cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8')) as {
-        suggestions: RawSuggestion[]
+
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    if (!apiKey) {
+      throw new Error(
+        'ANTHROPIC_API_KEY environment variable is not set. Add it to your .env file to use AI suggestions.',
+      )
+    }
+
+    if (descriptions.length === 0) {
+      return { suggestions: [], pendingMerchants: [] }
+    }
+
+    // 1. Gather existing merchants + their patterns (the "memory")
+    const existingMerchants = db.select().from(merchants).all()
+    const existingPatterns = db.select().from(merchantPatterns).all()
+
+    let memorySection = ''
+    if (existingMerchants.length > 0) {
+      const lines = existingMerchants.map((m) => {
+        const mPatterns = existingPatterns
+          .filter((p) => p.merchantId === m.id)
+          .map((p) => `"${p.pattern}" (${p.matchType.replace('_', ' ')})`)
+          .join(', ')
+        const cat = m.defaultCategory ? ` [${m.defaultCategory}]` : ''
+        const statusTag = m.status === 'pending' ? ' (pending)' : ''
+        return `- ${m.name}${cat}${statusTag}: ${mPatterns}`
+      })
+      memorySection = `## Existing Merchants (do NOT re-suggest these, but you MAY suggest "modify" to add new patterns)\n${lines.join('\n')}\n\n`
+    }
+
+    // 2. Build the descriptions list
+    const descriptionLines = descriptions
+      .map((d) => `${d.description} (${d.count})`)
+      .join('\n')
+
+    const userMessage = `${memorySection}## Unassigned Transaction Descriptions\n${descriptionLines}`
+
+    // 3. Call Claude Sonnet
+    const client = new Anthropic({ apiKey })
+    let response
+    try {
+      response = await client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8192,
+        system: SYSTEM_PROMPT,
+        tools: [TOOL_SCHEMA],
+        tool_choice: { type: 'tool', name: 'suggest_merchants' },
+        messages: [{ role: 'user', content: userMessage }],
+      })
+    } catch (err: unknown) {
+      if (err instanceof Anthropic.APIError) {
+        const body = err.error as { error?: { message?: string } } | undefined
+        const detail = body?.error?.message ?? err.message
+        throw new Error(`Anthropic API error: ${detail}`)
       }
-      const suggestions = calculateCounts(cached.suggestions)
-      return { suggestions, fromCache: true }
-    }
-  }
-
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    throw new Error(
-      'ANTHROPIC_API_KEY environment variable is not set. Add it to your .env file to use AI suggestions.',
-    )
-  }
-
-  if (descriptions.length === 0) {
-    return { suggestions: [], fromCache: false }
-  }
-
-  // 1. Gather existing merchants + their patterns (the "memory")
-  const existingMerchants = db.select().from(merchants).all()
-  const existingPatterns = db.select().from(merchantPatterns).all()
-
-  let memorySection = ''
-  if (existingMerchants.length > 0) {
-    const lines = existingMerchants.map((m) => {
-      const mPatterns = existingPatterns
-        .filter((p) => p.merchantId === m.id)
-        .map((p) => `"${p.pattern}" (${p.matchType.replace('_', ' ')})`)
-        .join(', ')
-      const cat = m.defaultCategory ? ` [${m.defaultCategory}]` : ''
-      return `- ${m.name}${cat}: ${mPatterns}`
-    })
-    memorySection = `## Existing Merchants (do NOT re-suggest these, but you MAY suggest "modify" to add new patterns)\n${lines.join('\n')}\n\n`
-  }
-
-  // 2. Build the descriptions list
-  const descriptionLines = descriptions
-    .map((d) => `${d.description} (${d.count})`)
-    .join('\n')
-
-  const userMessage = `${memorySection}## Unassigned Transaction Descriptions\n${descriptionLines}`
-
-  // 3. Call Claude Sonnet
-  const client = new Anthropic({ apiKey })
-  let response
-  try {
-    response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      tools: [TOOL_SCHEMA],
-      tool_choice: { type: 'tool', name: 'suggest_merchants' },
-      messages: [{ role: 'user', content: userMessage }],
-    })
-  } catch (err: unknown) {
-    if (err instanceof Anthropic.APIError) {
-      const body = err.error as { error?: { message?: string } } | undefined
-      const detail = body?.error?.message ?? err.message
-      throw new Error(`Anthropic API error: ${detail}`)
-    }
-    throw err
-  }
-
-  // 4. Parse tool use response
-  const toolUseBlock = response.content.find((block) => block.type === 'tool_use')
-  if (!toolUseBlock || toolUseBlock.type !== 'tool_use') {
-    throw new Error('AI did not return structured suggestions')
-  }
-
-  const rawSuggestions = (
-    toolUseBlock.input as { suggestions: RawSuggestion[] }
-  ).suggestions
-
-  // 5. Save raw AI response to cache file (unless skipCache)
-  if (!options?.skipCache) {
-    const fs = require('node:fs')
-    fs.writeFileSync(
-      getAICachePath(),
-      JSON.stringify({ suggestions: rawSuggestions }, null, 2),
-    )
-  }
-
-  // 6. Calculate actual DB match counts
-  const suggestions = calculateCounts(rawSuggestions)
-
-  return { suggestions, fromCache: false }
-})
-
-/**
- * Convert raw AI suggestions to typed AISuggestions with live DB counts.
- */
-function calculateCounts(rawSuggestions: RawSuggestion[]): AISuggestion[] {
-  const suggestions: AISuggestion[] = rawSuggestions.map((s) => {
-    const patterns: PatternInput[] = s.patterns.map((p) => ({
-      pattern: p.pattern,
-      matchType: p.matchType as PatternInput['matchType'],
-    }))
-
-    const whereClause = buildMultiPatternWhere(patterns)
-    let count = 0
-    if (whereClause) {
-      const result = db
-        .select({ count: sql<number>`count(*)` })
-        .from(transactions)
-        .where(sql`(${whereClause}) AND merchant_id IS NULL AND ignored = 0`)
-        .get()
-      count = result?.count ?? 0
+      throw err
     }
 
-    return {
+    // 4. Parse tool use response
+    const toolUseBlock = response.content.find((block) => block.type === 'tool_use')
+    if (!toolUseBlock || toolUseBlock.type !== 'tool_use') {
+      throw new Error('AI did not return structured suggestions')
+    }
+
+    const rawSuggestions = (
+      toolUseBlock.input as { suggestions: RawSuggestion[] }
+    ).suggestions
+
+    // 5. Convert to typed suggestions
+    const suggestions: AISuggestion[] = rawSuggestions.map((s) => ({
       type: (s.type as 'new' | 'modify') ?? 'new',
       name: s.name,
       existingMerchantName: s.existingMerchantName,
-      patterns,
+      patterns: s.patterns.map((p) => ({
+        pattern: p.pattern,
+        matchType: p.matchType as PatternInput['matchType'],
+      })),
       defaultCategory: s.defaultCategory,
       matchedDescriptions: s.matchedDescriptions,
-      count,
-    }
+    }))
+
+    // 6. Save as pending merchants in the database
+    const pendingMerchants = saveSuggestionsAsPending(suggestions)
+
+    return { suggestions, pendingMerchants }
   })
 
-  suggestions.sort((a, b) => b.count - a.count)
-  return suggestions
-}
-
-/**
- * Standalone server function for the merchants page.
- * Uses expense-only filtering and cache.
- */
-export const suggestMerchantsAI = createServerFn({ method: 'POST' }).handler(
-  async () => {
-    // Gather distinct unassigned descriptions with expense-only filters
-    const descriptions = db
-      .select({
-        description: transactions.description,
-        count: sql<number>`count(*)`,
-      })
-      .from(transactions)
-      .where(
-        and(
-          isNull(transactions.merchantId),
-          eq(transactions.ignored, 0),
-          lt(transactions.amount, 0),
-          notInArray(transactions.transactionType, [
-            'internal_transfer',
-            'cc_payment',
-          ]),
-        ),
-      )
-      .groupBy(transactions.description)
-      .orderBy(sql`count(*) DESC`)
-      .all()
-
-    return callMerchantAI({ data: { descriptions } })
-  },
-)
