@@ -4,6 +4,7 @@ import { getAccounts } from '../server/functions/import'
 import {
   parseAndNormalize,
   detectDuplicates,
+  assignInstitutionTransactions,
   assignExistingMerchants,
   requestAISuggestions,
   commitImport,
@@ -296,14 +297,21 @@ function ImportPage() {
 
   const handleContinueToMerchants = useCallback(async () => {
     setLoading(true)
-    setLoadingMessage('Matching against existing merchants...')
+    setLoadingMessage('Assigning institution transactions...')
 
     const rawTransactions: NormalizedTransaction[] = pipelineTransactions.map(
       ({ merchantId: _mid, merchantName: _mname, ...rest }) => rest,
     )
 
+    // Step 1: Assign institution transactions (checks, fees, interest)
+    const institutionResult = await assignInstitutionTransactions({
+      data: { transactions: rawTransactions, accountId: selectedAccountId! },
+    })
+
+    // Step 2: Match remaining transactions against existing merchant patterns
+    setLoadingMessage('Matching against existing merchants...')
     const assignResult = await assignExistingMerchants({
-      data: { transactions: rawTransactions },
+      data: { transactions: institutionResult.transactions },
     })
 
     setPipelineTransactions(assignResult.transactions)
@@ -325,7 +333,7 @@ function ImportPage() {
 
     setLoading(false)
     setStep('merchants')
-  }, [pipelineTransactions])
+  }, [pipelineTransactions, selectedAccountId])
 
   // ── Step 3: Merchant review handlers ──────────────────────────────
 

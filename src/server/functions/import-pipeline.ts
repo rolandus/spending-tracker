@@ -11,6 +11,32 @@ import {
   addMerchantPatterns,
 } from './merchants'
 import { callMerchantAI, type AISuggestion } from './ai-merchants'
+import {
+  detectInstitutionTransaction,
+  INSTITUTION_DISPLAY_NAMES,
+} from './institution-transactions'
+
+// ── Helper: Get or Create Institution Merchant ───────────────────────
+
+function getOrCreateInstitutionMerchant(institution: string): { id: number; name: string } {
+  const name = INSTITUTION_DISPLAY_NAMES[institution]
+  if (!name) {
+    throw new Error(`Unknown institution: ${institution}`)
+  }
+
+  const existing = db.select().from(merchants).where(eq(merchants.name, name)).get()
+  if (existing) {
+    return { id: existing.id, name: existing.name }
+  }
+
+  const created = db
+    .insert(merchants)
+    .values({ name, defaultCategory: null })
+    .returning()
+    .get()
+
+  return { id: created.id, name: created.name }
+}
 
 // ── Step 1: Parse & Normalize ────────────────────────────────────────
 
@@ -69,10 +95,69 @@ export const detectDuplicates = createServerFn({ method: 'POST' })
     return { newTransactions, duplicateCount }
   })
 
+// ── Step 2b: Assign Institution Transactions ─────────────────────────
+
+export const assignInstitutionTransactions = createServerFn({ method: 'POST' })
+  .inputValidator(
+    (data: { transactions: NormalizedTransaction[]; accountId: number }) => data,
+  )
+  .handler(async ({ data }) => {
+    const { transactions: txns, accountId } = data
+
+    const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
+    if (!account) {
+      return {
+        transactions: txns.map((t) => ({ ...t, merchantId: null, merchantName: null })) as PipelineTransaction[],
+        institutionAssignedCount: 0,
+      }
+    }
+
+    let institutionAssignedCount = 0
+    let institutionMerchant: { id: number; name: string } | null = null
+    const pipelineTransactions: PipelineTransaction[] = []
+
+    for (const txn of txns) {
+      if (txn.ignored) {
+        pipelineTransactions.push({ ...txn, merchantId: null, merchantName: null })
+        continue
+      }
+
+      const detection = detectInstitutionTransaction({
+        description: txn.description,
+        paymentMethod: txn.paymentMethod,
+        checkNumber: txn.checkNumber,
+        accountType: account.type,
+        transactionType: txn.transactionType,
+        amount: txn.amount,
+      })
+
+      if (detection) {
+        if (!institutionMerchant) {
+          institutionMerchant = getOrCreateInstitutionMerchant(account.institution)
+        }
+
+        pipelineTransactions.push({
+          ...txn,
+          merchantId: institutionMerchant.id,
+          merchantName: institutionMerchant.name,
+          category: txn.category ?? detection.category,
+        })
+        institutionAssignedCount++
+      } else {
+        pipelineTransactions.push({ ...txn, merchantId: null, merchantName: null })
+      }
+    }
+
+    return {
+      transactions: pipelineTransactions,
+      institutionAssignedCount,
+    }
+  })
+
 // ── Step 3: Assign Existing Merchants ────────────────────────────────
 
 export const assignExistingMerchants = createServerFn({ method: 'POST' })
-  .inputValidator((data: { transactions: NormalizedTransaction[] }) => data)
+  .inputValidator((data: { transactions: PipelineTransaction[] }) => data)
   .handler(async ({ data }) => {
     // Load all merchants and their patterns
     const allMerchants = db.select().from(merchants).all()
@@ -93,9 +178,9 @@ export const assignExistingMerchants = createServerFn({ method: 'POST' })
     const unassignedDescMap = new Map<string, number>()
 
     for (const txn of data.transactions) {
-      // Skip merchant matching for ignored transactions (cc_payment, internal_transfer)
-      if (txn.ignored) {
-        pipelineTransactions.push({ ...txn, merchantId: null, merchantName: null })
+      // Skip ignored transactions and those already assigned (e.g. institution transactions)
+      if (txn.ignored || txn.merchantId) {
+        pipelineTransactions.push(txn)
         continue
       }
 
