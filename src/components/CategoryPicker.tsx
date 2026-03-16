@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { CATEGORIES } from '../shared/categories'
 
 interface CategoryPickerProps {
   value: string | null
   onChange: (category: string | null) => void
   onClose: () => void
+  categories: string[]
 }
 
-export function CategoryPicker({ value, onChange, onClose }: CategoryPickerProps) {
+export function CategoryPicker({ value, onChange, onClose, categories }: CategoryPickerProps) {
   const [filter, setFilter] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -38,8 +38,8 @@ export function CategoryPicker({ value, onChange, onClose }: CategoryPickerProps
   }, [onClose])
 
   const filtered = filter
-    ? CATEGORIES.filter((c) => c.toLowerCase().includes(filter.toLowerCase()))
-    : CATEGORIES
+    ? categories.filter((c) => c.toLowerCase().includes(filter.toLowerCase()))
+    : categories
 
   const handleSelect = (category: string | null) => {
     onChange(category)

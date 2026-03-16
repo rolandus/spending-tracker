@@ -10,12 +10,15 @@ import {
   commitImport,
 } from '../server/functions/import-pipeline'
 import { getPendingMerchants } from '../server/functions/merchants'
-import { CATEGORIES } from '../shared/categories'
+import { getCategories } from '../server/functions/categories'
 import type { NormalizedTransaction, PipelineTransaction } from '../server/importers'
 import type { PendingMerchant } from '../server/functions/ai-merchants'
 
 export const Route = createFileRoute('/import')({
-  loader: () => getAccounts(),
+  loader: async () => {
+    const [accounts, categoryRows] = await Promise.all([getAccounts(), getCategories()])
+    return { accounts, categories: categoryRows.map((c) => c.name) }
+  },
   component: ImportPage,
 })
 
@@ -134,7 +137,7 @@ function PendingMerchantRow({
 // ── Main Import Page ─────────────────────────────────────────────────
 
 function ImportPage() {
-  const accounts = Route.useLoaderData()
+  const { accounts, categories: CATEGORIES } = Route.useLoaderData()
 
   // Wizard step
   const [step, setStep] = useState<Step>('upload')

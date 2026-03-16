@@ -52,6 +52,17 @@ export const transactions = sqliteTable('transactions', {
     .default(sql`(datetime('now'))`),
 })
 
+export const categories = sqliteTable('categories', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull().unique(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: text('created_at')
+    .notNull()
+    .default(sql`(datetime('now'))`),
+})
+
+export type CategoryRecord = typeof categories.$inferSelect
+
 export const categoryRules = sqliteTable('category_rules', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   pattern: text('pattern').notNull(),

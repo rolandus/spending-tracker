@@ -1,8 +1,147 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
-import { categoryRules, transactions } from '../db/schema'
-import { eq, like, sql, isNull, desc, and, notInArray, lt } from 'drizzle-orm'
+import { categories, categoryRules, transactions } from '../db/schema'
+import { eq, like, sql, isNull, desc, and, notInArray, lt, asc } from 'drizzle-orm'
 import type { CategoryRule } from '../db/schema'
+import { CATEGORIES } from '../../shared/categories'
+
+/**
+ * Get all categories from the DB. Seeds from the hardcoded list on first call.
+ */
+export const getCategories = createServerFn({ method: 'GET' }).handler(async () => {
+  let rows = db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)).all()
+
+  // Auto-seed if empty
+  if (rows.length === 0) {
+    for (let i = 0; i < CATEGORIES.length; i++) {
+      db.insert(categories)
+        .values({ name: CATEGORIES[i], sortOrder: i })
+        .onConflictDoNothing()
+        .run()
+    }
+    rows = db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)).all()
+  }
+
+  return rows
+})
+
+/**
+ * Get categories with transaction counts.
+ */
+export const getCategoriesWithCounts = createServerFn({ method: 'GET' }).handler(async () => {
+  // Ensure seeded
+  let rows = db.select().from(categories).all()
+  if (rows.length === 0) {
+    await getCategories()
+    rows = db.select().from(categories).all()
+  }
+
+  const result = db
+    .select({
+      id: categories.id,
+      name: categories.name,
+      sortOrder: categories.sortOrder,
+      transactionCount: sql<number>`(SELECT count(*) FROM transactions WHERE category = ${categories.name} AND ignored = 0)`,
+      merchantCount: sql<number>`(SELECT count(*) FROM merchants WHERE default_category = ${categories.name})`,
+    })
+    .from(categories)
+    .orderBy(asc(categories.sortOrder), asc(categories.name))
+    .all()
+
+  return result
+})
+
+/**
+ * Create a new category.
+ */
+export const createCategory = createServerFn({ method: 'POST' })
+  .inputValidator((data: { name: string }) => data)
+  .handler(async ({ data }) => {
+    const maxOrder = db
+      .select({ max: sql<number>`COALESCE(MAX(sort_order), 0)` })
+      .from(categories)
+      .get()
+
+    const row = db
+      .insert(categories)
+      .values({ name: data.name.trim(), sortOrder: (maxOrder?.max ?? 0) + 1 })
+      .returning()
+      .get()
+
+    return row
+  })
+
+/**
+ * Rename a category. Updates all transactions and merchant defaults that used the old name.
+ */
+export const renameCategory = createServerFn({ method: 'POST' })
+  .inputValidator((data: { id: number; newName: string }) => data)
+  .handler(async ({ data }) => {
+    const existing = db.select().from(categories).where(eq(categories.id, data.id)).get()
+    if (!existing) throw new Error('Category not found')
+
+    const oldName = existing.name
+    const newName = data.newName.trim()
+
+    db.update(categories).set({ name: newName }).where(eq(categories.id, data.id)).run()
+
+    // Update transactions
+    const txResult = db.run(
+      sql`UPDATE transactions SET category = ${newName} WHERE category = ${oldName} AND ignored = 0`,
+    )
+
+    // Update merchant defaults
+    const mResult = db.run(
+      sql`UPDATE merchants SET default_category = ${newName} WHERE default_category = ${oldName}`,
+    )
+
+    // Update category rules
+    const rResult = db.run(
+      sql`UPDATE category_rules SET category = ${newName} WHERE category = ${oldName}`,
+    )
+
+    return {
+      success: true,
+      transactionsUpdated: txResult.changes,
+      merchantsUpdated: mResult.changes,
+      rulesUpdated: rResult.changes,
+    }
+  })
+
+/**
+ * Delete a category. Uncategorizes all transactions that used it.
+ */
+export const deleteCategory = createServerFn({ method: 'POST' })
+  .inputValidator((data: { id: number }) => data)
+  .handler(async ({ data }) => {
+    const existing = db.select().from(categories).where(eq(categories.id, data.id)).get()
+    if (!existing) throw new Error('Category not found')
+
+    // Uncategorize transactions
+    const txResult = db.run(
+      sql`UPDATE transactions SET category = NULL WHERE category = ${existing.name}`,
+    )
+
+    // Clear merchant defaults
+    const mResult = db.run(
+      sql`UPDATE merchants SET default_category = NULL WHERE default_category = ${existing.name}`,
+    )
+
+    // Delete category rules that used this category
+    const rResult = db.run(
+      sql`DELETE FROM category_rules WHERE category = ${existing.name}`,
+    )
+
+    // Delete the category
+    db.delete(categories).where(eq(categories.id, data.id)).run()
+
+    return {
+      success: true,
+      transactionsUncategorized: txResult.changes,
+      merchantsCleared: mResult.changes,
+      rulesDeleted: rResult.changes,
+    }
+  })
 
 /**
  * List all category rules, ordered by priority descending.

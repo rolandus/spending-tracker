@@ -14,17 +14,18 @@ import {
   suggestMerchantsAI,
 } from '../server/functions/merchants'
 import type { PendingMerchant } from '../server/functions/ai-merchants'
-import { CATEGORIES } from '../shared/categories'
+import { getCategories } from '../server/functions/categories'
 
 type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
 
 export const Route = createFileRoute('/merchants')({
   loader: async () => {
-    const [merchantList, rawSuggestions, stats, pending] = await Promise.all([
+    const [merchantList, rawSuggestions, stats, pending, categoryRows] = await Promise.all([
       getMerchants(),
       suggestMerchants(),
       getMerchantStats(),
       getPendingMerchants(),
+      getCategories(),
     ])
 
     // Resolve actual match counts using previewMerchantPatterns, then sort desc
@@ -39,7 +40,7 @@ export const Route = createFileRoute('/merchants')({
     )
     suggestions.sort((a, b) => b.count - a.count)
 
-    return { merchants: merchantList, suggestions, stats, pendingMerchants: pending }
+    return { merchants: merchantList, suggestions, stats, pendingMerchants: pending, categories: categoryRows.map((c) => c.name) }
   },
   component: MerchantsPage,
 })
@@ -49,9 +50,11 @@ type Suggestion = { prefix: string; pattern: string; count: number; sample: stri
 function SuggestionRow({
   suggestion,
   onApplied,
+  categories,
 }: {
   suggestion: Suggestion
   onApplied: () => void
+  categories: string[]
 }) {
   const [patterns, setPatterns] = useState<PatternInput[]>([
     { pattern: suggestion.pattern, matchType: 'starts_with' },
@@ -176,7 +179,7 @@ function SuggestionRow({
           className="rounded border border-slate-300 px-2 py-1 text-xs"
         >
           <option value="">None</option>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -218,10 +221,12 @@ function PendingMerchantPageRow({
   merchant,
   onConfirmed,
   onDeleted,
+  categories,
 }: {
   merchant: PendingMerchant
   onConfirmed: () => void
   onDeleted: () => void
+  categories: string[]
 }) {
   const [name, setName] = useState(merchant.name)
   const [patterns, setPatterns] = useState<PatternInput[]>(
@@ -332,7 +337,7 @@ function PendingMerchantPageRow({
           className="rounded border border-slate-300 px-2 py-1 text-xs"
         >
           <option value="">None</option>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -373,10 +378,12 @@ function ConfirmedMerchantRow({
   merchant,
   onUpdated,
   onDeleted,
+  categories,
 }: {
   merchant: MerchantWithDetails
   onUpdated: () => void
   onDeleted: () => void
+  categories: string[]
 }) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(merchant.name)
@@ -539,7 +546,7 @@ function ConfirmedMerchantRow({
           className="rounded border border-slate-300 px-2 py-1 text-xs"
         >
           <option value="">None</option>
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
@@ -581,7 +588,7 @@ function ConfirmedMerchantRow({
 }
 
 function MerchantsPage() {
-  const { merchants: merchantList, suggestions, stats, pendingMerchants: initialPending } = Route.useLoaderData()
+  const { merchants: merchantList, suggestions, stats, pendingMerchants: initialPending, categories } = Route.useLoaderData()
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [patterns, setPatterns] = useState<PatternInput[]>([
@@ -801,6 +808,7 @@ function MerchantsPage() {
                   merchant={pm}
                   onConfirmed={handlePendingConfirmed}
                   onDeleted={handlePendingDeleted}
+                  categories={categories}
                 />
               ))}
             </tbody>
@@ -841,7 +849,7 @@ function MerchantsPage() {
                 onChange={(e) => setDefaultCategory(e.target.value)}
               >
                 <option value="">None</option>
-                {CATEGORIES.map((c) => (
+                {categories.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -947,6 +955,7 @@ function MerchantsPage() {
                   key={i}
                   suggestion={s}
                   onApplied={() => window.location.reload()}
+                  categories={categories}
                 />
               ))}
             </tbody>
@@ -983,6 +992,7 @@ function MerchantsPage() {
                   merchant={m}
                   onUpdated={() => window.location.reload()}
                   onDeleted={() => handleDelete(m.id)}
+                  categories={categories}
                 />
               ))}
             </tbody>

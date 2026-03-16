@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-table'
 import { getTransactions, updateTransaction, type TransactionWithAccount } from '../server/functions/transactions'
 import { getAccounts } from '../server/functions/import'
+import { getCategories } from '../server/functions/categories'
 import { CategoryPicker } from '../components/CategoryPicker'
 
 interface TransactionsSearch {
@@ -32,11 +33,12 @@ export const Route = createFileRoute('/transactions/')({
   }),
   loaderDeps: ({ search }) => search,
   loader: async ({ deps }) => {
-    const [txnResult, accounts] = await Promise.all([
+    const [txnResult, accounts, categoryRows] = await Promise.all([
       getTransactions({ data: { ...deps, pageSize: 50 } }),
       getAccounts(),
+      getCategories(),
     ])
-    return { txnResult, accounts }
+    return { txnResult, accounts, categories: categoryRows.map((c) => c.name) }
   },
   component: TransactionsPage,
 })
@@ -60,10 +62,12 @@ const TRANSACTION_TYPES = [
 function CategoryCell({
   transactionId,
   category,
+  categories,
   onUpdated,
 }: {
   transactionId: number
   category: string | null
+  categories: string[]
   onUpdated: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -90,6 +94,7 @@ function CategoryCell({
           value={category}
           onChange={handleChange}
           onClose={() => setOpen(false)}
+          categories={categories}
         />
       )}
     </div>
@@ -97,7 +102,7 @@ function CategoryCell({
 }
 
 function TransactionsPage() {
-  const { txnResult, accounts } = Route.useLoaderData()
+  const { txnResult, accounts, categories } = Route.useLoaderData()
   const search = Route.useSearch()
   const navigate = useNavigate()
   const router = useRouter()
@@ -211,6 +216,7 @@ function TransactionsPage() {
           <CategoryCell
             transactionId={info.row.original.id}
             category={info.getValue<string | null>()}
+            categories={categories}
             onUpdated={handleCategoryUpdate}
           />
         ),
