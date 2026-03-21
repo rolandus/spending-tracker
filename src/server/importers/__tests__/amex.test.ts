@@ -44,9 +44,9 @@ describe('importAmex', () => {
     expect(result[0]!.paymentMethod).toBe('credit')
   })
 
-  it('infers transaction type as expense for charges', () => {
+  it('sets transactionType to unknown (AI classifies later)', () => {
     const result = importAmex(csv('01/15/2025,AMAZON PURCHASE,ROLAND G SCOTT,12345,42.50'), 1, 'amex.csv')
-    expect(result[0]!.transactionType).toBe('expense')
+    expect(result[0]!.transactionType).toBe('unknown')
   })
 
   it('computes importHash', () => {

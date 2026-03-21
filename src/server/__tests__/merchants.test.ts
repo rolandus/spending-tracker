@@ -37,12 +37,10 @@ function seedTransactions() {
 
 function createMerchantWithPatterns(
   name: string,
-  patterns: { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }[],
-  defaultCategory?: string,
+  patterns: { pattern: string; matchType: 'contains' | 'starts_with' | 'exact'; defaultCategory?: string; defaultTransactionType?: string; defaultIgnored?: boolean }[],
 ) {
   const merchant = db.insert(merchants).values({
     name,
-    defaultCategory: defaultCategory ?? null,
   }).returning().get()
 
   for (const p of patterns) {
@@ -50,6 +48,9 @@ function createMerchantWithPatterns(
       merchantId: merchant.id,
       pattern: p.pattern,
       matchType: p.matchType,
+      defaultCategory: p.defaultCategory ?? null,
+      defaultTransactionType: p.defaultTransactionType ?? null,
+      defaultIgnored: p.defaultIgnored ? 1 : 0,
     }).run()
   }
 
@@ -98,24 +99,24 @@ describe('createMerchant with patterns', () => {
     expect(result.changes).toBe(3)
   })
 
-  it('auto-categorizes when defaultCategory is provided', () => {
+  it('auto-categorizes when per-pattern defaultCategory is provided', () => {
     const merchant = createMerchantWithPatterns(
       'Amazon',
-      [{ pattern: 'AMZN MKTP', matchType: 'contains' }],
-      'Shopping',
+      [{ pattern: 'AMZN MKTP', matchType: 'contains', defaultCategory: 'Shopping' }],
     )
 
     const where = buildMultiPatternWhere([{ pattern: 'AMZN MKTP', matchType: 'contains' }])
     db.run(sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${where}) AND merchant_id IS NULL AND ignored = 0`))
-    const catResult = db.run(
-      sql`UPDATE transactions SET category = ${merchant.defaultCategory} WHERE merchant_id = ${merchant.id} AND category IS NULL`,
+    db.run(
+      sql`UPDATE transactions SET category = 'Shopping' WHERE merchant_id = ${merchant.id} AND category IS NULL`,
     )
-
-    expect(catResult.changes).toBe(2)
 
     const t = db.select().from(transactions).where(eq(transactions.importHash, 'm1')).get()!
     expect(t.category).toBe('Shopping')
     expect(t.merchantId).toBe(merchant.id)
+
+    const t2 = db.select().from(transactions).where(eq(transactions.importHash, 'm2')).get()!
+    expect(t2.category).toBe('Shopping')
   })
 
   it('does not categorize already-categorized transactions', () => {
@@ -123,8 +124,7 @@ describe('createMerchant with patterns', () => {
 
     const merchant = createMerchantWithPatterns(
       'Amazon',
-      [{ pattern: 'AMZN MKTP', matchType: 'contains' }],
-      'Shopping',
+      [{ pattern: 'AMZN MKTP', matchType: 'contains', defaultCategory: 'Shopping' }],
     )
 
     const where = buildMultiPatternWhere([{ pattern: 'AMZN MKTP', matchType: 'contains' }])
@@ -287,13 +287,11 @@ describe('suggestMerchants', () => {
 describe('pending merchants', () => {
   function createPendingMerchant(
     name: string,
-    patterns: { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }[],
-    defaultCategory?: string,
+    patterns: { pattern: string; matchType: 'contains' | 'starts_with' | 'exact'; defaultCategory?: string; defaultTransactionType?: string; defaultIgnored?: boolean }[],
     modifiesMerchantId?: number,
   ) {
     const merchant = db.insert(merchants).values({
       name,
-      defaultCategory: defaultCategory ?? null,
       status: 'pending',
       modifiesMerchantId: modifiesMerchantId ?? null,
     }).returning().get()
@@ -303,6 +301,9 @@ describe('pending merchants', () => {
         merchantId: merchant.id,
         pattern: p.pattern,
         matchType: p.matchType,
+        defaultCategory: p.defaultCategory ?? null,
+        defaultTransactionType: p.defaultTransactionType ?? null,
+        defaultIgnored: p.defaultIgnored ? 1 : 0,
       }).run()
     }
 
@@ -353,8 +354,8 @@ describe('pending merchants', () => {
 
   it('confirm "new" pending merchant promotes to confirmed and auto-applies', () => {
     const pm = createPendingMerchant('Netflix', [
-      { pattern: 'NETFLIX', matchType: 'contains' },
-    ], 'Entertainment')
+      { pattern: 'NETFLIX', matchType: 'contains', defaultCategory: 'Entertainment' },
+    ])
 
     // Confirm it
     db.update(merchants)
@@ -389,7 +390,7 @@ describe('pending merchants', () => {
     // Create a pending "modify" merchant with new patterns
     const pm = createPendingMerchant('Amazon (modify)', [
       { pattern: 'Amazon.com', matchType: 'starts_with' },
-    ], undefined, target.id)
+    ], target.id)
 
     // Simulate confirm "modify":
     // 1. Copy patterns to target
@@ -498,6 +499,51 @@ describe('pending merchants', () => {
     // But both exist
     const all = db.select().from(merchants).where(eq(merchants.status, 'pending')).all()
     expect(all).toHaveLength(2)
+  })
+})
+
+describe('defaultIgnored patterns', () => {
+  it('pattern with defaultIgnored sets ignored=1 on matched transactions', () => {
+    const merchant = createMerchantWithPatterns('Chase CC Payment', [
+      { pattern: 'AUTOMATIC PAYMENT', matchType: 'contains', defaultIgnored: true, defaultTransactionType: 'cc_payment' },
+    ])
+
+    // Add a transaction that matches
+    db.insert(transactions).values({
+      accountId: 3, date: '2025-01-20', description: 'AUTOMATIC PAYMENT - THANK YOU',
+      amount: 500, transactionType: 'unknown', sourceFile: 'test.csv', importHash: 'ign1',
+    }).run()
+
+    // Apply pattern — defaultIgnored should set ignored=1
+    const likePattern = `%AUTOMATIC PAYMENT%`
+    db.run(sql.raw(`UPDATE transactions SET merchant_id = ${merchant.id}, ignored = 1 WHERE description LIKE '${likePattern}' AND merchant_id IS NULL`))
+
+    const txn = db.select().from(transactions).where(eq(transactions.importHash, 'ign1')).get()!
+    expect(txn.merchantId).toBe(merchant.id)
+    expect(txn.ignored).toBe(1)
+  })
+
+  it('pattern with defaultIgnored does not set ignored on non-matching transactions', () => {
+    createMerchantWithPatterns('Chase CC Payment', [
+      { pattern: 'AUTOMATIC PAYMENT', matchType: 'contains', defaultIgnored: true },
+    ])
+
+    // Netflix should remain unaffected
+    const txn = db.select().from(transactions).where(eq(transactions.importHash, 'm3')).get()!
+    expect(txn.ignored).toBe(0)
+    expect(txn.merchantId).toBeNull()
+  })
+
+  it('getMerchants returns only confirmed merchants', () => {
+    createMerchantWithPatterns('Amazon', [
+      { pattern: 'AMZN', matchType: 'contains' },
+    ])
+
+    db.insert(merchants).values({ name: 'Pending One', status: 'pending' }).run()
+
+    const confirmed = db.select().from(merchants).where(eq(merchants.status, 'confirmed')).all()
+    expect(confirmed).toHaveLength(1)
+    expect(confirmed[0].name).toBe('Amazon')
   })
 })
 

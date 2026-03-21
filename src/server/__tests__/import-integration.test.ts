@@ -124,25 +124,25 @@ describe('import pipeline integration', () => {
     expect(() => getImporter('unknown_bank')).toThrow('No importer found')
   })
 
-  describe('ignored flag on import', () => {
-    it('sets ignored=1 for cc_payment transactions (Chase)', () => {
+  describe('transaction defaults on import', () => {
+    it('sets transactionType=unknown and ignored=0 for all transactions (AI classifies later)', () => {
       const csv = 'Transaction Date,Post Date,Description,Category,Type,Amount,Memo\n01/15/2025,01/16/2025,AUTOMATIC PAYMENT - THANK,Shopping,Payment,500.00,'
       const result = importCSV({ accountId: 3, csvContent: csv, fileName: 'chase.csv' })
 
       expect(result.inserted).toBe(1)
       const rows = db.select().from(transactions).all()
-      expect(rows[0]!.transactionType).toBe('cc_payment')
-      expect(rows[0]!.ignored).toBe(1)
+      expect(rows[0]!.transactionType).toBe('unknown')
+      expect(rows[0]!.ignored).toBe(0)
     })
 
-    it('sets ignored=1 for internal_transfer transactions (Lake Ridge)', () => {
+    it('sets transactionType=unknown for Lake Ridge transfers (AI classifies later)', () => {
       const csv = '"Date","Description","Comments","Check Number","Amount","Balance"\n"01/15/2025","TRANSFER TO SAVINGS","","","-$500.00","$1,000.00"'
       const result = importCSV({ accountId: 4, csvContent: csv, fileName: 'checking.csv' })
 
       expect(result.inserted).toBe(1)
       const rows = db.select().from(transactions).all()
-      expect(rows[0]!.transactionType).toBe('internal_transfer')
-      expect(rows[0]!.ignored).toBe(1)
+      expect(rows[0]!.transactionType).toBe('unknown')
+      expect(rows[0]!.ignored).toBe(0)
     })
 
     it('sets ignored=0 for regular expense transactions', () => {
@@ -151,7 +151,7 @@ describe('import pipeline integration', () => {
 
       expect(result.inserted).toBe(1)
       const rows = db.select().from(transactions).all()
-      expect(rows[0]!.transactionType).toBe('expense')
+      expect(rows[0]!.transactionType).toBe('unknown')
       expect(rows[0]!.ignored).toBe(0)
     })
   })

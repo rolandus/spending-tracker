@@ -1,5 +1,5 @@
 import type { ImporterFn } from './types'
-import { parseCSV, parseDate, computeImportHash, inferTransactionType, inferPaymentMethod } from './utils'
+import { parseCSV, parseDate, computeImportHash, inferPaymentMethod } from './utils'
 
 /**
  * American Express CSV importer.
@@ -28,10 +28,8 @@ export const importAmex: ImporterFn = (csvContent, accountId, sourceFile) => {
     const rawAmountNum = parseFloat(rawAmount.replace(/,/g, ''))
     const amount = -rawAmountNum
 
-    const transactionType = inferTransactionType(description, amount, 'credit_card')
     const paymentMethod = inferPaymentMethod('credit_card', description)
     const importHash = computeImportHash(accountId, date, amount, description)
-    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -39,14 +37,14 @@ export const importAmex: ImporterFn = (csvContent, accountId, sourceFile) => {
       postedDate: null,
       description: description.trim(),
       amount,
-      transactionType,
+      transactionType: 'unknown' as const,
       paymentMethod: paymentMethod ?? null,
       checkNumber: null,
       cardholder: cardMember?.trim() ?? null,
       sourceCategory: null,
       category: null,
       notes: null,
-      ignored,
+      ignored: 0,
       sourceFile,
       importHash,
     }

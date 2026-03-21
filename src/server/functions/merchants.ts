@@ -1,10 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
 import { merchants, merchantPatterns, transactions } from '../db/schema'
-import { eq, sql, desc, isNull, and, lt, notInArray } from 'drizzle-orm'
+import { eq, sql, desc, isNull, and } from 'drizzle-orm'
 
 export type { PatternInput } from '../../shared/pattern-matching'
-export { matchesPattern, matchesAnyPattern } from '../../shared/pattern-matching'
+export { matchesPattern, matchesAnyPattern, findMatchingPattern } from '../../shared/pattern-matching'
 import type { PatternInput } from '../../shared/pattern-matching'
 
 /**
@@ -23,7 +23,6 @@ export const getPendingMerchants = createServerFn({ method: 'GET' }).handler(asy
   return rows.map((m) => ({
     id: m.id,
     name: m.name,
-    defaultCategory: m.defaultCategory,
     status: 'pending' as const,
     modifiesMerchantId: m.modifiesMerchantId,
     patterns: patterns
@@ -31,6 +30,9 @@ export const getPendingMerchants = createServerFn({ method: 'GET' }).handler(asy
       .map((p) => ({
         pattern: p.pattern,
         matchType: p.matchType as 'contains' | 'starts_with' | 'exact',
+        defaultCategory: p.defaultCategory ?? null,
+        defaultTransactionType: p.defaultTransactionType ?? null,
+        defaultIgnored: p.defaultIgnored === 1,
       })),
   }))
 })
@@ -39,7 +41,7 @@ export const getPendingMerchants = createServerFn({ method: 'GET' }).handler(asy
  * List all merchants with their patterns and transaction counts.
  */
 export const getMerchants = createServerFn({ method: 'GET' }).handler(async () => {
-  const rows = db.select().from(merchants).orderBy(merchants.name).all()
+  const rows = db.select().from(merchants).where(eq(merchants.status, 'confirmed')).orderBy(merchants.name).all()
 
   const patterns = db.select().from(merchantPatterns).all()
   const patternMap = new Map<number, typeof patterns>()
@@ -63,7 +65,14 @@ export const getMerchants = createServerFn({ method: 'GET' }).handler(async () =
 
   return rows.map((m) => ({
     ...m,
-    patterns: patternMap.get(m.id) ?? [],
+    patterns: (patternMap.get(m.id) ?? []).map((p) => ({
+      id: p.id,
+      pattern: p.pattern,
+      matchType: p.matchType,
+      defaultCategory: p.defaultCategory ?? null,
+      defaultTransactionType: p.defaultTransactionType ?? null,
+      defaultIgnored: p.defaultIgnored === 1,
+    })),
     transactionCount: countMap.get(m.id) ?? 0,
   }))
 })
@@ -76,48 +85,33 @@ export const createMerchant = createServerFn({ method: 'POST' })
     (data: {
       name: string
       patterns: PatternInput[]
-      defaultCategory?: string | null
     }) => data,
   )
   .handler(async ({ data }) => {
     const merchant = db
       .insert(merchants)
-      .values({
-        name: data.name,
-        defaultCategory: data.defaultCategory ?? null,
-      })
+      .values({ name: data.name })
       .returning()
       .get()
 
-    // Insert patterns
+    // Insert patterns with per-pattern defaults
     for (const p of data.patterns) {
       db.insert(merchantPatterns)
         .values({
           merchantId: merchant.id,
           pattern: p.pattern,
           matchType: p.matchType,
+          defaultCategory: p.defaultCategory ?? null,
+          defaultTransactionType: p.defaultTransactionType ?? null,
+          defaultIgnored: p.defaultIgnored ? 1 : 0,
         })
         .run()
     }
 
-    // Apply all patterns (OR'd) to matching transactions
-    const whereClause = buildMultiPatternWhere(data.patterns)
-    if (!whereClause) return { merchant, matched: 0, categorized: 0 }
+    // Apply patterns to matching transactions (per-pattern)
+    const { matched, categorized } = applyPatternUpdates(merchant.id, data.patterns)
 
-    const matchResult = db.run(
-      sql`UPDATE transactions SET merchant_id = ${merchant.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
-    )
-
-    // If there's a default category, also categorize uncategorized matches
-    let categorized = 0
-    if (data.defaultCategory) {
-      const catResult = db.run(
-        sql`UPDATE transactions SET category = ${data.defaultCategory} WHERE merchant_id = ${merchant.id} AND category IS NULL AND ignored = 0`,
-      )
-      categorized = catResult.changes
-    }
-
-    return { merchant, matched: matchResult.changes, categorized }
+    return { merchant, matched, categorized }
   })
 
 /**
@@ -128,18 +122,17 @@ export const updateMerchant = createServerFn({ method: 'POST' })
     (data: {
       id: number
       name?: string
-      defaultCategory?: string | null
       patterns?: PatternInput[]
       reapply?: boolean
+      modifiesMerchantId?: number | null
     }) => data,
   )
   .handler(async ({ data }) => {
-    const { id, patterns, reapply, ...fields } = data
-    const updates: Record<string, unknown> = {}
+    const { id, patterns, reapply } = data
 
-    if (fields.name !== undefined) updates.name = fields.name
-    if ('defaultCategory' in fields) updates.defaultCategory = fields.defaultCategory
-
+    const updates: Record<string, any> = {}
+    if (data.name !== undefined) updates.name = data.name
+    if (data.modifiesMerchantId !== undefined) updates.modifiesMerchantId = data.modifiesMerchantId
     if (Object.keys(updates).length > 0) {
       db.update(merchants).set(updates).where(eq(merchants.id, id)).run()
     }
@@ -148,7 +141,14 @@ export const updateMerchant = createServerFn({ method: 'POST' })
       db.delete(merchantPatterns).where(eq(merchantPatterns.merchantId, id)).run()
       for (const p of patterns) {
         db.insert(merchantPatterns)
-          .values({ merchantId: id, pattern: p.pattern, matchType: p.matchType })
+          .values({
+            merchantId: id,
+            pattern: p.pattern,
+            matchType: p.matchType,
+            defaultCategory: p.defaultCategory ?? null,
+            defaultTransactionType: p.defaultTransactionType ?? null,
+            defaultIgnored: p.defaultIgnored ? 1 : 0,
+          })
           .run()
       }
     }
@@ -156,21 +156,9 @@ export const updateMerchant = createServerFn({ method: 'POST' })
     let matched = 0
     let categorized = 0
     if (reapply && patterns) {
-      const whereClause = buildMultiPatternWhere(patterns)
-      if (whereClause) {
-        const result = db.run(
-          sql`UPDATE transactions SET merchant_id = ${id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
-        )
-        matched = result.changes
-
-        const merchant = db.select().from(merchants).where(eq(merchants.id, id)).get()
-        if (merchant?.defaultCategory) {
-          const catResult = db.run(
-            sql`UPDATE transactions SET category = ${merchant.defaultCategory} WHERE merchant_id = ${id} AND category IS NULL AND ignored = 0`,
-          )
-          categorized = catResult.changes
-        }
-      }
+      const result = applyPatternUpdates(id, patterns)
+      matched = result.matched
+      categorized = result.categorized
     }
 
     return { success: true, matched, categorized }
@@ -198,17 +186,18 @@ export const applyMerchantRules = createServerFn({ method: 'POST' }).handler(asy
   let totalMatched = 0
 
   for (const m of allMerchants) {
-    const mPatterns = allPatterns
+    const mPatterns: PatternInput[] = allPatterns
       .filter((p) => p.merchantId === m.id)
-      .map((p) => ({ pattern: p.pattern, matchType: p.matchType }))
+      .map((p) => ({
+        pattern: p.pattern,
+        matchType: p.matchType as PatternInput['matchType'],
+        defaultCategory: p.defaultCategory ?? null,
+        defaultTransactionType: p.defaultTransactionType ?? null,
+        defaultIgnored: p.defaultIgnored === 1,
+      }))
 
-    const whereClause = buildMultiPatternWhere(mPatterns)
-    if (!whereClause) continue
-
-    const result = db.run(
-      sql`UPDATE transactions SET merchant_id = ${m.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
-    )
-    totalMatched += result.changes
+    const { matched } = applyPatternUpdates(m.id, mPatterns)
+    totalMatched += matched
   }
 
   return { totalMatched, merchantsProcessed: allMerchants.length }
@@ -300,6 +289,7 @@ export const getMerchantStats = createServerFn({ method: 'GET' }).handler(async 
 
 /**
  * Build a SQL fragment with OR'd LIKE conditions for multiple patterns.
+ * Used for preview/matching queries where we only need to know IF something matches.
  */
 export function buildMultiPatternWhere(patterns: PatternInput[]) {
   const validPatterns = patterns.filter((p) => p.pattern.trim())
@@ -318,6 +308,72 @@ export function buildMultiPatternWhere(patterns: PatternInput[]) {
 }
 
 /**
+ * Apply each pattern individually to unassigned transactions, setting
+ * merchant_id, category, and transaction_type per-pattern.
+ */
+function applyPatternUpdates(
+  merchantId: number,
+  patterns: PatternInput[],
+): { matched: number; categorized: number } {
+  let totalMatched = 0
+  let totalCategorized = 0
+
+  for (const p of patterns) {
+    if (!p.pattern.trim()) continue
+    const likePattern = buildLikePattern(p.pattern, p.matchType)
+
+    if (p.defaultIgnored) {
+      // For ignored patterns: assign merchant and mark as ignored
+      // Match unassigned OR already assigned to this merchant
+      const matchResult = db.run(
+        sql`UPDATE transactions SET merchant_id = ${merchantId}, ignored = 1
+            WHERE description LIKE ${likePattern}
+              AND (merchant_id IS NULL OR merchant_id = ${merchantId})`,
+      )
+      totalMatched += matchResult.changes
+
+      // Apply transaction type if set (even for ignored)
+      // No 'unknown' guard — each pattern's type wins for its matched transactions
+      if (p.defaultTransactionType) {
+        db.run(
+          sql`UPDATE transactions SET transaction_type = ${p.defaultTransactionType}
+              WHERE description LIKE ${likePattern} AND merchant_id = ${merchantId}`,
+        )
+      }
+    } else {
+      // Normal patterns: assign merchant to unassigned or already-owned, non-ignored transactions
+      const matchResult = db.run(
+        sql`UPDATE transactions SET merchant_id = ${merchantId}
+            WHERE description LIKE ${likePattern}
+              AND (merchant_id IS NULL OR merchant_id = ${merchantId})
+              AND ignored = 0`,
+      )
+      totalMatched += matchResult.changes
+
+      // Apply per-pattern category if set
+      if (p.defaultCategory) {
+        const catResult = db.run(
+          sql`UPDATE transactions SET category = ${p.defaultCategory}
+              WHERE description LIKE ${likePattern} AND merchant_id = ${merchantId} AND category IS NULL AND ignored = 0`,
+        )
+        totalCategorized += catResult.changes
+      }
+
+      // Apply per-pattern transaction type if set
+      // No 'unknown' guard — each pattern's type wins for its matched transactions
+      if (p.defaultTransactionType) {
+        db.run(
+          sql`UPDATE transactions SET transaction_type = ${p.defaultTransactionType}
+              WHERE description LIKE ${likePattern} AND merchant_id = ${merchantId} AND ignored = 0`,
+        )
+      }
+    }
+  }
+
+  return { matched: totalMatched, categorized: totalCategorized }
+}
+
+/**
  * Append patterns to an existing merchant without replacing existing ones,
  * then apply the new patterns to unassigned transactions DB-wide.
  */
@@ -332,17 +388,15 @@ export const addMerchantPatterns = createServerFn({ method: 'POST' })
           merchantId: data.merchantId,
           pattern: p.pattern,
           matchType: p.matchType,
+          defaultCategory: p.defaultCategory ?? null,
+          defaultTransactionType: p.defaultTransactionType ?? null,
+          defaultIgnored: p.defaultIgnored ? 1 : 0,
         })
         .run()
     }
 
-    const whereClause = buildMultiPatternWhere(data.patterns)
-    if (!whereClause) return { matched: 0 }
-
-    const result = db.run(
-      sql`UPDATE transactions SET merchant_id = ${data.merchantId} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
-    )
-    return { matched: result.changes }
+    const { matched } = applyPatternUpdates(data.merchantId, data.patterns)
+    return { matched }
   })
 
 /**
@@ -356,12 +410,18 @@ export const confirmMerchant = createServerFn({ method: 'POST' })
       return { success: false, error: 'Merchant not found or not pending' }
     }
 
-    const pendingPatterns = db
+    const pendingPatterns: PatternInput[] = db
       .select()
       .from(merchantPatterns)
       .where(eq(merchantPatterns.merchantId, pending.id))
       .all()
-      .map((p) => ({ pattern: p.pattern, matchType: p.matchType as 'contains' | 'starts_with' | 'exact' }))
+      .map((p) => ({
+        pattern: p.pattern,
+        matchType: p.matchType as PatternInput['matchType'],
+        defaultCategory: p.defaultCategory ?? null,
+        defaultTransactionType: p.defaultTransactionType ?? null,
+        defaultIgnored: p.defaultIgnored === 1,
+      }))
 
     if (pending.modifiesMerchantId) {
       // "modify" type — merge patterns into the target merchant
@@ -377,6 +437,9 @@ export const confirmMerchant = createServerFn({ method: 'POST' })
             merchantId: target.id,
             pattern: p.pattern,
             matchType: p.matchType,
+            defaultCategory: p.defaultCategory ?? null,
+            defaultTransactionType: p.defaultTransactionType ?? null,
+            defaultIgnored: p.defaultIgnored ? 1 : 0,
           })
           .run()
       }
@@ -386,13 +449,8 @@ export const confirmMerchant = createServerFn({ method: 'POST' })
         sql`UPDATE transactions SET merchant_id = ${target.id} WHERE merchant_id = ${pending.id}`,
       )
 
-      // Apply new patterns to unassigned transactions
-      const whereClause = buildMultiPatternWhere(pendingPatterns)
-      if (whereClause) {
-        db.run(
-          sql`UPDATE transactions SET merchant_id = ${target.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
-        )
-      }
+      // Apply new patterns to unassigned transactions (per-pattern)
+      applyPatternUpdates(target.id, pendingPatterns)
 
       // Delete the pending merchant and its patterns
       db.delete(merchantPatterns).where(eq(merchantPatterns.merchantId, pending.id)).run()
@@ -406,20 +464,8 @@ export const confirmMerchant = createServerFn({ method: 'POST' })
         .where(eq(merchants.id, pending.id))
         .run()
 
-      // Apply patterns to unassigned transactions
-      const whereClause = buildMultiPatternWhere(pendingPatterns)
-      if (whereClause) {
-        db.run(
-          sql`UPDATE transactions SET merchant_id = ${pending.id} WHERE (${whereClause}) AND merchant_id IS NULL AND ignored = 0`,
-        )
-
-        // Categorize if default category is set
-        if (pending.defaultCategory) {
-          db.run(
-            sql`UPDATE transactions SET category = ${pending.defaultCategory} WHERE merchant_id = ${pending.id} AND category IS NULL AND ignored = 0`,
-          )
-        }
-      }
+      // Apply patterns to unassigned transactions (per-pattern)
+      applyPatternUpdates(pending.id, pendingPatterns)
 
       return { success: true, merchantId: pending.id, merged: false }
     }
@@ -455,11 +501,6 @@ export const suggestMerchantsAI = createServerFn({ method: 'POST' }).handler(
         and(
           isNull(transactions.merchantId),
           eq(transactions.ignored, 0),
-          lt(transactions.amount, 0),
-          notInArray(transactions.transactionType, [
-            'internal_transfer',
-            'cc_payment',
-          ]),
         ),
       )
       .groupBy(transactions.description)

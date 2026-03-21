@@ -1,24 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { createServerFn } from '@tanstack/react-start'
 import { db } from '../db'
-import { merchants, merchantPatterns } from '../db/schema'
+import { accounts, merchants, merchantPatterns } from '../db/schema'
 import { and, eq } from 'drizzle-orm'
 import { type PatternInput } from './merchants'
 import { CATEGORIES } from '../../shared/categories'
+import { INSTITUTION_DISPLAY_NAMES } from '../../shared/institutions'
 
 export type AISuggestion = {
   type: 'new' | 'modify'
   name: string
   existingMerchantName?: string
   patterns: PatternInput[]
-  defaultCategory: string
   matchedDescriptions: string[]
 }
 
 export type PendingMerchant = {
   id: number
   name: string
-  defaultCategory: string | null
   status: 'pending'
   modifiesMerchantId: number | null
   patterns: PatternInput[]
@@ -60,13 +59,23 @@ const TOOL_SCHEMA = {
                     type: 'string' as const,
                     enum: ['contains', 'starts_with', 'exact'],
                   },
+                  defaultCategory: {
+                    type: 'string' as const,
+                    description: 'Best-fit category for transactions matching this pattern',
+                  },
+                  defaultTransactionType: {
+                    type: 'string' as const,
+                    enum: ['expense', 'income', 'refund', 'cc_payment', 'internal_transfer'],
+                    description: 'Transaction type for transactions matching this pattern',
+                  },
+                  defaultIgnored: {
+                    type: 'boolean' as const,
+                    description:
+                      'Set to true for transactions that should be hidden/ignored (credit card payments, internal transfers). These are not real spending.',
+                  },
                 },
-                required: ['pattern', 'matchType'],
+                required: ['pattern', 'matchType', 'defaultCategory', 'defaultTransactionType', 'defaultIgnored'],
               },
-            },
-            defaultCategory: {
-              type: 'string' as const,
-              description: 'Best-fit category',
             },
             matchedDescriptions: {
               type: 'array' as const,
@@ -78,7 +87,6 @@ const TOOL_SCHEMA = {
             'type',
             'name',
             'patterns',
-            'defaultCategory',
             'matchedDescriptions',
           ],
         },
@@ -90,13 +98,49 @@ const TOOL_SCHEMA = {
 
 const SYSTEM_PROMPT = `You are a financial transaction analyzer. Given a list of bank transaction descriptions (with occurrence counts), group them by the company/merchant they belong to.
 
+You must classify every transaction description into one of three categories:
+
+## Type 1 — Ignored Transactions (defaultIgnored: true)
+These are NOT real spending — they are money moving between the user's own accounts:
+- Credit card payments (PAYMENT, AUTOPAY, THANK YOU on credit cards; payments TO credit card companies from checking like "AMERICAN EXPRESS", "CAPITAL ONE", "CHASE CARD")
+- Internal transfers (TRANSFER FROM/TO, XFER FROM/TO, ONLINE TRANSFER, FUNDS TRANSFER, balance transfers)
+- Use the financial institution's display name as the merchant name
+- Set defaultTransactionType to "cc_payment" or "internal_transfer" as appropriate
+- Set defaultIgnored to true
+- Category can be left as "Other" since these are hidden
+
+## Type 2 — Institution Transactions (defaultIgnored: false)
+These are real transactions from the bank/institution itself:
+- Overdraft/NSF fees, maintenance fees, service charges
+- Interest charges / finance charges (credit cards)
+- Interest income / dividends (checking/savings)
+- Checks written (CHECK #, check payments)
+- Direct deposits / payroll
+- Use the financial institution's display name as the merchant name
+- Set appropriate category (e.g., "Fees/Interest" for fees and interest, "Other" for checks, "Income" for payroll/direct deposits)
+- Set defaultIgnored to false
+
+## Type 3 — Regular Merchants (defaultIgnored: false)
+Everything else — real purchases from businesses:
+- Retail, restaurants, subscriptions, utilities, etc.
+- Use a clean merchant name (e.g., "Amazon", "Kwik Trip", "State Farm")
+- Set appropriate category and transaction type
+- Set defaultIgnored to false
+
 For each group:
 - type: "new" to create a new merchant, or "modify" to add patterns to an existing merchant
-- name: A clean, human-readable merchant name (e.g., "Amazon", "Kwik Trip", "State Farm")
+- name: A clean, human-readable merchant name
 - existingMerchantName: (only for type="modify") The EXACT name of the existing merchant to modify
-- patterns: One or more matching rules. Each has a \`pattern\` string and \`matchType\` ("contains", "starts_with", or "exact"). For "modify" suggestions, include ONLY the new patterns to add — not the merchant's existing patterns.
-- defaultCategory: Best-fit category from this list: ${CATEGORIES.join(', ')}
+- patterns: One or more matching rules. Each has:
+  - pattern: the string to match against transaction descriptions
+  - matchType: "contains", "starts_with", or "exact"
+  - defaultCategory: Best-fit category from this list: ${CATEGORIES.join(', ')}
+  - defaultTransactionType: One of "expense", "income", "refund", "cc_payment", or "internal_transfer"
+  - defaultIgnored: true for Type 1 (hidden), false for Types 2 and 3
+  For "modify" suggestions, include ONLY the new patterns to add — not the merchant's existing patterns.
 - matchedDescriptions: Which descriptions from the input belong to this group
+
+Each pattern can have DIFFERENT properties. For example, one pattern might be ignored while another on the same merchant is not.
 
 Rules:
 - If a description clearly belongs to an existing merchant but none of its current patterns would match it, use type="modify" with the new pattern(s) needed. Set existingMerchantName to the EXACT name from the existing merchants list.
@@ -110,8 +154,13 @@ type RawSuggestion = {
   type?: string
   name: string
   existingMerchantName?: string
-  patterns: Array<{ pattern: string; matchType: string }>
-  defaultCategory: string
+  patterns: Array<{
+    pattern: string
+    matchType: string
+    defaultCategory?: string
+    defaultTransactionType?: string
+    defaultIgnored?: boolean
+  }>
   matchedDescriptions: string[]
 }
 
@@ -166,12 +215,14 @@ export function saveSuggestionsAsPending(
         created.push({
           id: existing.id,
           name: existing.name,
-          defaultCategory: existing.defaultCategory,
           status: 'pending',
           modifiesMerchantId: existing.modifiesMerchantId,
           patterns: existingPatterns.map((p) => ({
             pattern: p.pattern,
             matchType: p.matchType as PatternInput['matchType'],
+            defaultCategory: p.defaultCategory ?? null,
+            defaultTransactionType: p.defaultTransactionType ?? null,
+            defaultIgnored: p.defaultIgnored === 1,
           })),
         })
         continue
@@ -182,7 +233,6 @@ export function saveSuggestionsAsPending(
         .insert(merchants)
         .values({
           name: s.name,
-          defaultCategory: s.defaultCategory || null,
           status: 'pending',
           modifiesMerchantId: target.id,
         })
@@ -195,6 +245,9 @@ export function saveSuggestionsAsPending(
             merchantId: merchant.id,
             pattern: p.pattern,
             matchType: p.matchType,
+            defaultCategory: p.defaultCategory ?? null,
+            defaultTransactionType: p.defaultTransactionType ?? null,
+            defaultIgnored: p.defaultIgnored ? 1 : 0,
           })
           .run()
       }
@@ -202,7 +255,6 @@ export function saveSuggestionsAsPending(
       created.push({
         id: merchant.id,
         name: merchant.name,
-        defaultCategory: merchant.defaultCategory,
         status: 'pending',
         modifiesMerchantId: merchant.modifiesMerchantId,
         patterns,
@@ -228,12 +280,14 @@ export function saveSuggestionsAsPending(
         created.push({
           id: existing.id,
           name: existing.name,
-          defaultCategory: existing.defaultCategory,
           status: 'pending',
           modifiesMerchantId: existing.modifiesMerchantId,
           patterns: existingPatterns.map((p) => ({
             pattern: p.pattern,
             matchType: p.matchType as PatternInput['matchType'],
+            defaultCategory: p.defaultCategory ?? null,
+            defaultTransactionType: p.defaultTransactionType ?? null,
+            defaultIgnored: p.defaultIgnored === 1,
           })),
         })
         continue
@@ -244,7 +298,6 @@ export function saveSuggestionsAsPending(
         .insert(merchants)
         .values({
           name: s.name,
-          defaultCategory: s.defaultCategory || null,
           status: 'pending',
           modifiesMerchantId: null,
         })
@@ -257,6 +310,9 @@ export function saveSuggestionsAsPending(
             merchantId: merchant.id,
             pattern: p.pattern,
             matchType: p.matchType,
+            defaultCategory: p.defaultCategory ?? null,
+            defaultTransactionType: p.defaultTransactionType ?? null,
+            defaultIgnored: p.defaultIgnored ? 1 : 0,
           })
           .run()
       }
@@ -264,7 +320,6 @@ export function saveSuggestionsAsPending(
       created.push({
         id: merchant.id,
         name: merchant.name,
-        defaultCategory: merchant.defaultCategory,
         status: 'pending',
         modifiesMerchantId: null,
         patterns,
@@ -285,10 +340,11 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
   .inputValidator(
     (data: {
       descriptions: { description: string; count: number }[]
+      accountId?: number
     }) => data,
   )
   .handler(async ({ data }): Promise<{ suggestions: AISuggestion[]; pendingMerchants: PendingMerchant[] }> => {
-    const { descriptions } = data
+    const { descriptions, accountId } = data
 
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) {
@@ -310,28 +366,43 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       const lines = existingMerchants.map((m) => {
         const mPatterns = existingPatterns
           .filter((p) => p.merchantId === m.id)
-          .map((p) => `"${p.pattern}" (${p.matchType.replace('_', ' ')})`)
+          .map((p) => {
+            const cat = p.defaultCategory ? ` [${p.defaultCategory}]` : ''
+            const type = p.defaultTransactionType ? ` {${p.defaultTransactionType}}` : ''
+            const ignored = p.defaultIgnored ? ' (IGNORED)' : ''
+            return `"${p.pattern}" (${p.matchType.replace('_', ' ')}${cat}${type}${ignored})`
+          })
           .join(', ')
-        const cat = m.defaultCategory ? ` [${m.defaultCategory}]` : ''
         const statusTag = m.status === 'pending' ? ' (pending)' : ''
-        return `- ${m.name}${cat}${statusTag}: ${mPatterns}`
+        return `- ${m.name}${statusTag}: ${mPatterns}`
       })
       memorySection = `## Existing Merchants (do NOT re-suggest these, but you MAY suggest "modify" to add new patterns)\n${lines.join('\n')}\n\n`
     }
 
-    // 2. Build the descriptions list
+    // 2. Build institution context
+    let institutionContext = ''
+    if (accountId) {
+      const account = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
+      if (account) {
+        const displayName = INSTITUTION_DISPLAY_NAMES[account.institution] ?? account.institution
+        const accountType = account.type.replace('_', ' ')
+        institutionContext = `## Account Context\nThis is a ${accountType} account at ${displayName}. Use "${displayName}" as the merchant name for institution-related transactions (Type 1 and Type 2).\n\n`
+      }
+    }
+
+    // 3. Build the descriptions list
     const descriptionLines = descriptions
       .map((d) => `${d.description} (${d.count})`)
       .join('\n')
 
-    const userMessage = `${memorySection}## Unassigned Transaction Descriptions\n${descriptionLines}`
+    const userMessage = `${memorySection}${institutionContext}## Unassigned Transaction Descriptions\n${descriptionLines}`
 
-    // 3. Call Claude Sonnet
+    // 4. Call Claude Haiku
     const client = new Anthropic({ apiKey })
     let response
     try {
       response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-haiku-4-5',
         max_tokens: 8192,
         system: SYSTEM_PROMPT,
         tools: [TOOL_SCHEMA],
@@ -347,7 +418,7 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       throw err
     }
 
-    // 4. Parse tool use response
+    // 5. Parse tool use response
     const toolUseBlock = response.content.find((block) => block.type === 'tool_use')
     if (!toolUseBlock || toolUseBlock.type !== 'tool_use') {
       throw new Error('AI did not return structured suggestions')
@@ -357,7 +428,7 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       toolUseBlock.input as { suggestions: RawSuggestion[] }
     ).suggestions
 
-    // 5. Convert to typed suggestions
+    // 6. Convert to typed suggestions (per-pattern defaults)
     const suggestions: AISuggestion[] = rawSuggestions.map((s) => ({
       type: (s.type as 'new' | 'modify') ?? 'new',
       name: s.name,
@@ -365,14 +436,15 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       patterns: s.patterns.map((p) => ({
         pattern: p.pattern,
         matchType: p.matchType as PatternInput['matchType'],
+        defaultCategory: p.defaultCategory ?? null,
+        defaultTransactionType: p.defaultTransactionType ?? null,
+        defaultIgnored: p.defaultIgnored ?? false,
       })),
-      defaultCategory: s.defaultCategory,
       matchedDescriptions: s.matchedDescriptions,
     }))
 
-    // 6. Save as pending merchants in the database
+    // 7. Save as pending merchants in the database
     const pendingMerchants = saveSuggestionsAsPending(suggestions)
 
     return { suggestions, pendingMerchants }
   })
-

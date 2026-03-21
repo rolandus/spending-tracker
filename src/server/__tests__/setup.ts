@@ -63,7 +63,6 @@ export function createTestDb() {
     CREATE TABLE merchants (
       id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
       name text NOT NULL,
-      default_category text,
       status text DEFAULT 'confirmed' NOT NULL,
       modifies_merchant_id integer REFERENCES merchants(id),
       created_at text DEFAULT (datetime('now')) NOT NULL
@@ -74,6 +73,9 @@ export function createTestDb() {
       merchant_id integer NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
       pattern text NOT NULL,
       match_type text DEFAULT 'contains' NOT NULL,
+      default_category text,
+      default_transaction_type text,
+      default_ignored integer DEFAULT 0 NOT NULL,
       created_at text DEFAULT (datetime('now')) NOT NULL
     );
 

@@ -4,15 +4,16 @@ import { getAccounts } from '../server/functions/import'
 import {
   parseAndNormalize,
   detectDuplicates,
-  assignInstitutionTransactions,
   assignExistingMerchants,
   requestAISuggestions,
   commitImport,
 } from '../server/functions/import-pipeline'
-import { getPendingMerchants } from '../server/functions/merchants'
+import { getPendingMerchants, updateMerchant } from '../server/functions/merchants'
 import { getCategories } from '../server/functions/categories'
 import type { NormalizedTransaction, PipelineTransaction } from '../server/importers'
 import type { PendingMerchant } from '../server/functions/ai-merchants'
+import type { PatternInput } from '../shared/pattern-matching'
+import { PatternRow } from '../components/PatternRow'
 
 export const Route = createFileRoute('/import')({
   loader: async () => {
@@ -68,67 +69,175 @@ function StepIndicator({ current }: { current: Step }) {
   )
 }
 
-// ── Pending Merchant Row ─────────────────────────────────────────────
+// ── Editable Suggestion Row ──────────────────────────────────────────
 
-function PendingMerchantRow({
+function EditableSuggestionRow({
   merchant,
   isConfirmed,
+  isSkipped,
+  categories,
   onConfirm,
   onSkip,
 }: {
   merchant: PendingMerchant
   isConfirmed: boolean
+  isSkipped: boolean
+  categories: string[]
   onConfirm: (id: number) => void
   onSkip: (id: number) => void
 }) {
+  const [name, setName] = useState(merchant.name)
+  const [patterns, setPatterns] = useState<PatternInput[]>(
+    merchant.patterns.length > 0
+      ? merchant.patterns
+      : [{ pattern: '', matchType: 'contains' }],
+  )
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const hasIgnoredPatterns = patterns.some((p) => p.defaultIgnored)
+
+  const markDirty = () => {
+    setDirty(true)
+    setSaved(false)
+    setSaveError(null)
+  }
+
+  const handleNameChange = (newName: string) => {
+    setName(newName)
+    markDirty()
+  }
+
+  const handlePatternChange = (index: number, field: keyof PatternInput, value: string | boolean) => {
+    setPatterns((prev) =>
+      prev.map((p, i) => (i === index ? { ...p, [field]: value === '' ? null : value } : p)),
+    )
+    markDirty()
+  }
+
+  const handleAddPattern = () => {
+    setPatterns((prev) => [...prev, { pattern: '', matchType: 'contains' as const }])
+    markDirty()
+  }
+
+  const handleRemovePattern = (index: number) => {
+    setPatterns((prev) => prev.filter((_, i) => i !== index))
+    markDirty()
+  }
+
+  const handleSave = async () => {
+    const validPatterns = patterns.filter((p) => p.pattern.trim())
+    if (!name.trim() || validPatterns.length === 0) return
+    setSaving(true)
+    try {
+      await updateMerchant({
+        data: {
+          id: merchant.id,
+          name: name.trim(),
+          patterns: validPatterns,
+        },
+      })
+      setDirty(false)
+      setSaved(true)
+    } catch (err) {
+      console.error('Failed to save merchant:', merchant.id, err)
+      setSaveError(String(err instanceof Error ? err.message : err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (isSkipped) return null
+
   return (
-    <tr className={`border-b border-slate-100 align-top ${isConfirmed ? 'bg-green-50' : ''}`}>
+    <tr className={`border-b border-slate-100 align-top ${isConfirmed ? 'bg-green-50' : ''} ${hasIgnoredPatterns ? 'bg-amber-50/30' : ''}`}>
       <td className="px-3 py-2">
-        {merchant.modifiesMerchantId && (
-          <span className="block text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5 mb-1 w-fit">
-            Adds patterns to existing merchant
-          </span>
-        )}
-        <span className="text-sm font-medium">{merchant.name}</span>
+        <div className="space-y-1">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => handleNameChange(e.target.value)}
+            className="w-full rounded border border-slate-300 px-2 py-1 text-xs font-medium"
+          />
+          <div className="flex gap-1 flex-wrap">
+            {merchant.modifiesMerchantId ? (
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5">
+                Modifies existing
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium text-blue-600 bg-blue-50 rounded px-1 py-0.5">
+                New merchant
+              </span>
+            )}
+            {hasIgnoredPatterns && (
+              <span className="text-[10px] font-medium text-amber-700 bg-amber-100 rounded px-1 py-0.5">
+                Ignored
+              </span>
+            )}
+          </div>
+        </div>
       </td>
       <td className="px-3 py-2">
         <div className="space-y-1">
-          {merchant.patterns.map((p, i) => (
-            <div key={i} className="flex gap-1 items-center">
-              <span className="flex-1 rounded bg-slate-50 border border-slate-200 px-2 py-1 text-xs font-mono">
-                {p.pattern}
-              </span>
-              <span className="text-[10px] text-slate-500 bg-slate-100 rounded px-1 py-0.5">
-                {p.matchType.replace('_', ' ')}
-              </span>
-            </div>
+          {patterns.map((p, i) => (
+            <PatternRow
+              key={i}
+              pattern={p}
+              index={i}
+              categories={categories}
+              canRemove={patterns.length > 1}
+              onChange={handlePatternChange}
+              onRemove={handleRemovePattern}
+            />
           ))}
+          <button
+            onClick={handleAddPattern}
+            className="text-blue-600 hover:text-blue-700 text-xs"
+          >
+            + Add pattern
+          </button>
         </div>
       </td>
-      <td className="px-3 py-2 text-xs text-slate-600">
-        {merchant.defaultCategory ?? '—'}
-      </td>
       <td className="px-3 py-2 text-right">
-        {isConfirmed ? (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-medium">
-            &#10003; Confirmed
-          </span>
-        ) : (
-          <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
+          {dirty && (
             <button
-              onClick={() => onConfirm(merchant.id)}
-              className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700"
+              onClick={handleSave}
+              disabled={saving || !name.trim() || patterns.every((p) => !p.pattern.trim())}
+              className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
             >
-              Confirm
+              {saving ? 'Saving...' : 'Save'}
             </button>
-            <button
-              onClick={() => onSkip(merchant.id)}
-              className="px-3 py-1 rounded border border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50"
-            >
-              Skip
-            </button>
-          </div>
-        )}
+          )}
+          {saved && !dirty && (
+            <span className="text-[10px] text-green-600 font-medium">✓ Saved</span>
+          )}
+          {saveError && (
+            <span className="text-[10px] text-red-600 font-medium">Error: {saveError}</span>
+          )}
+          {isConfirmed ? (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-medium">
+              &#10003; Confirmed
+            </span>
+          ) : (
+            <>
+              <button
+                onClick={() => onConfirm(merchant.id)}
+                className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700"
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => onSkip(merchant.id)}
+                className="px-3 py-1 rounded border border-slate-300 text-slate-600 text-xs font-medium hover:bg-slate-50"
+              >
+                Skip
+              </button>
+            </>
+          )}
+        </div>
       </td>
     </tr>
   )
@@ -212,7 +321,6 @@ function ImportPage() {
     setLoading(false)
 
     if (dedupResult.newTransactions.length === 0) {
-      // All duplicates, skip to parsed results
       setPipelineTransactions([])
       setStep('parsed')
       return
@@ -233,35 +341,34 @@ function ImportPage() {
 
   const handleContinueToMerchants = useCallback(async () => {
     setLoading(true)
-    setLoadingMessage('Assigning institution transactions...')
+    setLoadingMessage('Matching against existing merchants...')
 
     const rawTransactions: NormalizedTransaction[] = pipelineTransactions.map(
       ({ merchantId: _mid, merchantName: _mname, merchantStatus: _ms, ...rest }) => rest,
     )
 
-    // Step 1: Assign institution transactions (checks, fees, interest)
-    const institutionResult = await assignInstitutionTransactions({
-      data: { transactions: rawTransactions, accountId: selectedAccountId! },
-    })
-
-    // Step 2: Match remaining transactions against existing merchant patterns (confirmed + pending)
-    setLoadingMessage('Matching against existing merchants...')
+    // Step 1: Match transactions against existing merchant patterns (confirmed + pending)
     const assignResult = await assignExistingMerchants({
-      data: { transactions: institutionResult.transactions },
+      data: {
+        transactions: rawTransactions.map((t) => ({ ...t, merchantId: null, merchantName: null })),
+      },
     })
 
     let finalTransactions = assignResult.transactions
     let totalAutoAssigned = assignResult.autoAssignedCount
 
-    // Step 3: If unassigned descriptions remain, call AI to create new pending merchants
+    // Step 2: If unassigned descriptions remain, call AI to create new pending merchants
     if (assignResult.unassignedDescriptions.length > 0) {
       setLoadingMessage('Analyzing transactions with AI...')
       try {
         await requestAISuggestions({
-          data: { descriptions: assignResult.unassignedDescriptions },
+          data: {
+            descriptions: assignResult.unassignedDescriptions,
+            accountId: selectedAccountId!,
+          },
         })
 
-        // Step 4: Second assignment pass — new pending merchants now match
+        // Step 3: Second assignment pass — new pending merchants now match
         setLoadingMessage('Re-matching with AI suggestions...')
         const secondPass = await assignExistingMerchants({
           data: { transactions: finalTransactions },
@@ -285,27 +392,8 @@ function ImportPage() {
       }
     }
 
-    // Build pending merchant info from the transaction data
-    const pendingMap = new Map<number, PendingMerchant>()
-    for (const txn of finalTransactions) {
-      if (txn.merchantStatus === 'pending' && txn.merchantId && !pendingMap.has(txn.merchantId)) {
-        // We have the ID and name from the transaction — patterns will be fetched from AI result
-        // For now we store minimal info; the full pending merchant data comes from the second pass
-        pendingMap.set(txn.merchantId, {
-          id: txn.merchantId,
-          name: txn.merchantName ?? 'Unknown',
-          defaultCategory: txn.category ?? null,
-          status: 'pending',
-          modifiesMerchantId: null,
-          patterns: [],
-        })
-      }
-    }
-
-    // We need the full pending merchant data — fetch it from the server
+    // Fetch full pending merchant data from the server
     if (pendingIds.size > 0) {
-      // The pending merchants were created by requestAISuggestions and saved to DB
-      // Re-fetch them to get full data including patterns
       const allPending = await getPendingMerchants()
       const relevantPending = allPending.filter((pm) => pendingIds.has(pm.id))
       setPendingMerchants(relevantPending)
@@ -351,10 +439,44 @@ function ImportPage() {
 
   // ── Step 3 → 4 transition ────────────────────────────────────────
 
-  const handleContinueToReview = useCallback(() => {
-    setReviewTransactions([...pipelineTransactions])
-    setStep('review')
-  }, [pipelineTransactions])
+  const handleContinueToReview = useCallback(async () => {
+    setLoading(true)
+    setLoadingMessage('Re-matching transactions with updated merchants...')
+
+    try {
+      // Strip merchant assignments, then re-run server-side matching from the DB.
+      // This picks up any edits the user saved to pending merchants.
+      // For skipped merchants, we exclude their IDs so they don't get re-assigned.
+      const rawTransactions: PipelineTransaction[] = pipelineTransactions.map((txn) => ({
+        ...txn,
+        merchantId: null,
+        merchantName: null,
+        merchantStatus: undefined,
+        ignored: 0,
+        category: null,
+      }))
+
+      const result = await assignExistingMerchants({
+        data: { transactions: rawTransactions },
+      })
+
+      // Clear assignments from skipped merchants
+      const reviewed = result.transactions.map((txn) => {
+        if (txn.merchantId && skippedMerchantIds.has(txn.merchantId)) {
+          return { ...txn, merchantId: null, merchantName: null, merchantStatus: undefined }
+        }
+        return txn
+      })
+
+      setReviewTransactions(reviewed)
+      setStep('review')
+    } catch (err) {
+      console.error('Failed to re-match transactions:', err)
+      alert(`Error re-matching transactions: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [pipelineTransactions, skippedMerchantIds])
 
   // ── Step 4: Review handlers ──────────────────────────────────────
 
@@ -368,16 +490,22 @@ function ImportPage() {
     setLoading(true)
     setLoadingMessage('Importing transactions...')
 
-    const result = await commitImport({
-      data: {
-        transactions: reviewTransactions,
-        confirmedMerchantIds: Array.from(confirmedMerchantIds),
-      },
-    })
+    try {
+      const result = await commitImport({
+        data: {
+          transactions: reviewTransactions,
+          confirmedMerchantIds: Array.from(confirmedMerchantIds),
+        },
+      })
 
-    setCommitResult(result)
-    setLoading(false)
-    setStep('done')
+      setCommitResult(result)
+      setStep('done')
+    } catch (err) {
+      console.error('Failed to commit import:', err)
+      alert(`Error importing transactions: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setLoading(false)
+    }
   }, [reviewTransactions, confirmedMerchantIds])
 
   // ── Reset ─────────────────────────────────────────────────────────
@@ -540,14 +668,14 @@ function ImportPage() {
             </p>
           </div>
 
-          {/* Pending Merchants */}
+          {/* Pending Merchants — Editable */}
           {pendingMerchants.length > 0 && (
             <div className="bg-white rounded-lg border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-base font-semibold">Pending Merchants</h3>
+                  <h3 className="text-base font-semibold">AI Suggestions</h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    AI-suggested merchants that matched import transactions. Confirm to make permanent, or skip to leave pending.
+                    Review and edit suggestions. You can modify names, patterns, categories, and types before confirming.
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -571,25 +699,29 @@ function ImportPage() {
                     <tr>
                       <th className="px-3 py-2">Name</th>
                       <th className="px-3 py-2">Patterns</th>
-                      <th className="px-3 py-2">Category</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pendingMerchants
-                      .filter((pm) => !skippedMerchantIds.has(pm.id))
-                      .map((pm) => (
-                        <PendingMerchantRow
-                          key={pm.id}
-                          merchant={pm}
-                          isConfirmed={confirmedMerchantIds.has(pm.id)}
-                          onConfirm={handleConfirmMerchant}
-                          onSkip={handleSkipMerchant}
-                        />
-                      ))}
+                    {pendingMerchants.map((pm) => (
+                      <EditableSuggestionRow
+                        key={pm.id}
+                        merchant={pm}
+                        isConfirmed={confirmedMerchantIds.has(pm.id)}
+                        isSkipped={skippedMerchantIds.has(pm.id)}
+                        categories={CATEGORIES}
+                        onConfirm={handleConfirmMerchant}
+                        onSkip={handleSkipMerchant}
+                      />
+                    ))}
                   </tbody>
                 </table>
               </div>
+              {skippedMerchantIds.size > 0 && (
+                <p className="text-xs text-slate-400 mt-2">
+                  {skippedMerchantIds.size} suggestion(s) skipped
+                </p>
+              )}
             </div>
           )}
 
@@ -691,7 +823,7 @@ function ImportPage() {
                             {txn.merchantName}
                           </span>
                         ) : (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-slate-400">&mdash;</span>
                         )}
                       </td>
                       <td className="px-2 py-1.5">
@@ -701,7 +833,7 @@ function ImportPage() {
                           disabled={!!txn.ignored}
                           className="rounded border border-slate-200 px-1 py-0.5 text-xs w-full disabled:opacity-50"
                         >
-                          <option value="">—</option>
+                          <option value="">&mdash;</option>
                           {CATEGORIES.map((c) => (
                             <option key={c} value={c}>
                               {c}

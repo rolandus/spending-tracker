@@ -1,5 +1,5 @@
 import type { ImporterFn } from './types'
-import { parseCSV, parseDate, computeImportHash, inferTransactionType, inferPaymentMethod } from './utils'
+import { parseCSV, parseDate, computeImportHash, inferPaymentMethod } from './utils'
 
 /**
  * Capital One CSV importer.
@@ -30,10 +30,8 @@ export const importCapitalOne: ImporterFn = (csvContent, accountId, sourceFile) 
     const credit = rawCredit?.trim() ? parseFloat(rawCredit.trim()) : 0
     const amount = credit > 0 ? credit : -debit
 
-    const transactionType = inferTransactionType(description, amount, 'credit_card')
     const paymentMethod = inferPaymentMethod('credit_card', description)
     const importHash = computeImportHash(accountId, date, amount, description)
-    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -41,14 +39,14 @@ export const importCapitalOne: ImporterFn = (csvContent, accountId, sourceFile) 
       postedDate,
       description: description.trim(),
       amount,
-      transactionType,
+      transactionType: 'unknown' as const,
       paymentMethod: paymentMethod ?? null,
       checkNumber: null,
       cardholder: null,
       sourceCategory: category?.trim() || null,
       category: null,
       notes: null,
-      ignored,
+      ignored: 0,
       sourceFile,
       importHash,
     }

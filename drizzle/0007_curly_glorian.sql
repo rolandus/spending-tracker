@@ -1,0 +1,1 @@
+ALTER TABLE `merchant_patterns` ADD `default_ignored` integer DEFAULT 0 NOT NULL;

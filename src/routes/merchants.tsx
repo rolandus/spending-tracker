@@ -15,8 +15,8 @@ import {
 } from '../server/functions/merchants'
 import type { PendingMerchant } from '../server/functions/ai-merchants'
 import { getCategories } from '../server/functions/categories'
-
-type PatternInput = { pattern: string; matchType: 'contains' | 'starts_with' | 'exact' }
+import { PatternRow, PatternBadge } from '../components/PatternRow'
+import type { PatternInput } from '../shared/pattern-matching'
 
 export const Route = createFileRoute('/merchants')({
   loader: async () => {
@@ -47,6 +47,8 @@ export const Route = createFileRoute('/merchants')({
 
 type Suggestion = { prefix: string; pattern: string; count: number; sample: string }
 
+// ── Suggestion Row ──────────────────────────────────────────────────
+
 function SuggestionRow({
   suggestion,
   onApplied,
@@ -63,7 +65,6 @@ function SuggestionRow({
     const p = suggestion.pattern.trim()
     return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()
   })
-  const [defaultCategory, setDefaultCategory] = useState('')
   const [liveCount, setLiveCount] = useState<number>(suggestion.count)
   const [sampleDescs, setSampleDescs] = useState<string[]>([])
   const [showSamples, setShowSamples] = useState(false)
@@ -91,9 +92,9 @@ function SuggestionRow({
     return () => clearTimeout(timer)
   }, [patternsKey])
 
-  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
+  const updatePattern = (index: number, field: keyof PatternInput, value: string | boolean) => {
     setPatterns((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
+      prev.map((p, i) => (i === index ? { ...p, [field]: value === '' ? null : value } : p)),
     )
   }
 
@@ -114,7 +115,6 @@ function SuggestionRow({
         data: {
           name: name.trim(),
           patterns: validPatterns,
-          defaultCategory: defaultCategory || null,
         },
       })
       onApplied()
@@ -137,32 +137,15 @@ function SuggestionRow({
       <td className="px-3 py-2">
         <div className="space-y-1">
           {patterns.map((p, i) => (
-            <div key={i} className="flex gap-1 items-center">
-              <input
-                type="text"
-                value={p.pattern}
-                onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
-                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
-                placeholder="Pattern"
-              />
-              <select
-                value={p.matchType}
-                onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
-                className="rounded border border-slate-300 px-1 py-1 text-xs"
-              >
-                <option value="contains">Contains</option>
-                <option value="starts_with">Starts with</option>
-                <option value="exact">Exact</option>
-              </select>
-              {patterns.length > 1 && (
-                <button
-                  onClick={() => removePattern(i)}
-                  className="text-red-400 hover:text-red-600 text-xs px-1"
-                >
-                  ×
-                </button>
-              )}
-            </div>
+            <PatternRow
+              key={i}
+              pattern={p}
+              index={i}
+              categories={categories}
+              canRemove={patterns.length > 1}
+              onChange={updatePattern}
+              onRemove={removePattern}
+            />
           ))}
           <button
             onClick={addPattern}
@@ -171,20 +154,6 @@ function SuggestionRow({
             + Add pattern
           </button>
         </div>
-      </td>
-      <td className="px-3 py-2">
-        <select
-          value={defaultCategory}
-          onChange={(e) => setDefaultCategory(e.target.value)}
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
-        >
-          <option value="">None</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
       </td>
       <td className="px-3 py-2 text-right">
         <button
@@ -210,20 +179,24 @@ function SuggestionRow({
           disabled={!name.trim() || patterns.every((p) => !p.pattern.trim()) || applying}
           className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
         >
-          {applying ? 'Applying…' : 'Apply'}
+          {applying ? 'Applying...' : 'Apply'}
         </button>
       </td>
     </tr>
   )
 }
 
+// ── Pending Merchant Row (Merchants Page) ───────────────────────────
+
 function PendingMerchantPageRow({
   merchant,
+  confirmedMerchants,
   onConfirmed,
   onDeleted,
   categories,
 }: {
   merchant: PendingMerchant
+  confirmedMerchants: { id: number; name: string }[]
   onConfirmed: () => void
   onDeleted: () => void
   categories: string[]
@@ -234,12 +207,12 @@ function PendingMerchantPageRow({
       ? merchant.patterns
       : [{ pattern: '', matchType: 'contains' }],
   )
-  const [defaultCategory, setDefaultCategory] = useState(merchant.defaultCategory ?? '')
+  const [mergeTargetId, setMergeTargetId] = useState<number | null>(merchant.modifiesMerchantId ?? null)
   const [applying, setApplying] = useState(false)
 
-  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
+  const updatePattern = (index: number, field: keyof PatternInput, value: string | boolean) => {
     setPatterns((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
+      prev.map((p, i) => (i === index ? { ...p, [field]: value === '' ? null : value } : p)),
     )
   }
 
@@ -260,8 +233,8 @@ function PendingMerchantPageRow({
         data: {
           id: merchant.id,
           name: name.trim(),
-          defaultCategory: defaultCategory || null,
           patterns: validPatterns,
+          modifiesMerchantId: mergeTargetId,
         },
       })
       await confirmMerchant({ data: { id: merchant.id } })
@@ -276,6 +249,10 @@ function PendingMerchantPageRow({
     onDeleted()
   }
 
+  const mergeTargetName = mergeTargetId
+    ? confirmedMerchants.find((m) => m.id === mergeTargetId)?.name
+    : null
+
   return (
     <tr className="border-b border-slate-100 align-top">
       <td className="px-3 py-2">
@@ -286,41 +263,24 @@ function PendingMerchantPageRow({
           className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
           placeholder="Name"
         />
-        {merchant.modifiesMerchantId && (
+        {mergeTargetName && (
           <span className="block text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5 mt-1 w-fit">
-            Extends existing merchant
+            Merges into: {mergeTargetName}
           </span>
         )}
       </td>
       <td className="px-3 py-2">
         <div className="space-y-1">
           {patterns.map((p, i) => (
-            <div key={i} className="flex gap-1 items-center">
-              <input
-                type="text"
-                value={p.pattern}
-                onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
-                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
-                placeholder="Pattern"
-              />
-              <select
-                value={p.matchType}
-                onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
-                className="rounded border border-slate-300 px-1 py-1 text-xs"
-              >
-                <option value="contains">Contains</option>
-                <option value="starts_with">Starts with</option>
-                <option value="exact">Exact</option>
-              </select>
-              {patterns.length > 1 && (
-                <button
-                  onClick={() => removePattern(i)}
-                  className="text-red-400 hover:text-red-600 text-xs px-1"
-                >
-                  ×
-                </button>
-              )}
-            </div>
+            <PatternRow
+              key={i}
+              pattern={p}
+              index={i}
+              categories={categories}
+              canRemove={patterns.length > 1}
+              onChange={updatePattern}
+              onRemove={removePattern}
+            />
           ))}
           <button
             onClick={addPattern}
@@ -331,27 +291,25 @@ function PendingMerchantPageRow({
         </div>
       </td>
       <td className="px-3 py-2">
-        <select
-          value={defaultCategory}
-          onChange={(e) => setDefaultCategory(e.target.value)}
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
-        >
-          <option value="">None</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td className="px-3 py-2 text-right">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
+          <select
+            value={mergeTargetId ?? ''}
+            onChange={(e) => setMergeTargetId(e.target.value ? Number(e.target.value) : null)}
+            className="rounded border border-slate-300 px-1 py-1 text-xs"
+          >
+            <option value="">New merchant</option>
+            {confirmedMerchants.map((m) => (
+              <option key={m.id} value={m.id}>
+                Merge with: {m.name}
+              </option>
+            ))}
+          </select>
           <button
             onClick={handleConfirm}
             disabled={!name.trim() || patterns.every((p) => !p.pattern.trim()) || applying}
             className="px-3 py-1 rounded bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-40"
           >
-            {applying ? 'Confirming…' : 'Confirm'}
+            {applying ? 'Confirming...' : 'Confirm'}
           </button>
           <button
             onClick={handleDelete}
@@ -365,12 +323,13 @@ function PendingMerchantPageRow({
   )
 }
 
+// ── Confirmed Merchant Row ──────────────────────────────────────────
+
 type MerchantWithDetails = {
   id: number
   name: string
-  defaultCategory: string | null
   status: string
-  patterns: { id: number; pattern: string; matchType: string }[]
+  patterns: { id: number; pattern: string; matchType: string; defaultCategory: string | null; defaultTransactionType: string | null; defaultIgnored: boolean }[]
   transactionCount: number
 }
 
@@ -388,16 +347,21 @@ function ConfirmedMerchantRow({
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(merchant.name)
   const [patterns, setPatterns] = useState<PatternInput[]>(
-    merchant.patterns.map((p) => ({ pattern: p.pattern, matchType: p.matchType as PatternInput['matchType'] })),
+    merchant.patterns.map((p) => ({
+      pattern: p.pattern,
+      matchType: p.matchType as PatternInput['matchType'],
+      defaultCategory: p.defaultCategory ?? null,
+      defaultTransactionType: p.defaultTransactionType ?? null,
+      defaultIgnored: p.defaultIgnored,
+    })),
   )
-  const [defaultCategory, setDefaultCategory] = useState(merchant.defaultCategory ?? '')
   const [reapply, setReapply] = useState(false)
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<string | null>(null)
 
-  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
+  const updatePattern = (index: number, field: keyof PatternInput, value: string | boolean) => {
     setPatterns((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
+      prev.map((p, i) => (i === index ? { ...p, [field]: value === '' ? null : value } : p)),
     )
   }
 
@@ -412,8 +376,13 @@ function ConfirmedMerchantRow({
   const handleCancel = () => {
     setEditing(false)
     setName(merchant.name)
-    setPatterns(merchant.patterns.map((p) => ({ pattern: p.pattern, matchType: p.matchType as PatternInput['matchType'] })))
-    setDefaultCategory(merchant.defaultCategory ?? '')
+    setPatterns(merchant.patterns.map((p) => ({
+      pattern: p.pattern,
+      matchType: p.matchType as PatternInput['matchType'],
+      defaultCategory: p.defaultCategory ?? null,
+      defaultTransactionType: p.defaultTransactionType ?? null,
+      defaultIgnored: p.defaultIgnored,
+    })))
     setReapply(false)
     setResult(null)
   }
@@ -427,7 +396,6 @@ function ConfirmedMerchantRow({
         data: {
           id: merchant.id,
           name: name.trim(),
-          defaultCategory: defaultCategory || null,
           patterns: validPatterns,
           reapply,
         },
@@ -450,26 +418,9 @@ function ConfirmedMerchantRow({
         <td className="px-4 py-2">
           <div className="flex flex-wrap gap-1">
             {merchant.patterns.map((p) => (
-              <span
-                key={p.id}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-slate-100 text-slate-700"
-              >
-                {p.pattern}
-                <span className="text-slate-400">
-                  ({p.matchType.replace('_', ' ')})
-                </span>
-              </span>
+              <PatternBadge key={p.id} pattern={p} />
             ))}
           </div>
-        </td>
-        <td className="px-4 py-2">
-          {merchant.defaultCategory ? (
-            <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-700">
-              {merchant.defaultCategory}
-            </span>
-          ) : (
-            <span className="text-slate-400">—</span>
-          )}
         </td>
         <td className="px-4 py-2 text-right text-slate-600">{merchant.transactionCount}</td>
         <td className="px-4 py-2 text-right">
@@ -505,31 +456,15 @@ function ConfirmedMerchantRow({
       <td className="px-4 py-2">
         <div className="space-y-1">
           {patterns.map((p, i) => (
-            <div key={i} className="flex gap-1 items-center">
-              <input
-                type="text"
-                value={p.pattern}
-                onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
-                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs font-mono"
-              />
-              <select
-                value={p.matchType}
-                onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
-                className="rounded border border-slate-300 px-1 py-1 text-xs"
-              >
-                <option value="contains">Contains</option>
-                <option value="starts_with">Starts with</option>
-                <option value="exact">Exact</option>
-              </select>
-              {patterns.length > 1 && (
-                <button
-                  onClick={() => removePattern(i)}
-                  className="text-red-400 hover:text-red-600 text-xs px-1"
-                >
-                  ×
-                </button>
-              )}
-            </div>
+            <PatternRow
+              key={i}
+              pattern={p}
+              index={i}
+              categories={categories}
+              canRemove={patterns.length > 1}
+              onChange={updatePattern}
+              onRemove={removePattern}
+            />
           ))}
           <button
             onClick={addPattern}
@@ -538,20 +473,6 @@ function ConfirmedMerchantRow({
             + Add pattern
           </button>
         </div>
-      </td>
-      <td className="px-4 py-2">
-        <select
-          value={defaultCategory}
-          onChange={(e) => setDefaultCategory(e.target.value)}
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
-        >
-          <option value="">None</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
       </td>
       <td className="px-4 py-2 text-right text-slate-600">{merchant.transactionCount}</td>
       <td className="px-4 py-2">
@@ -570,7 +491,7 @@ function ConfirmedMerchantRow({
             disabled={!name.trim() || patterns.every((p) => !p.pattern.trim()) || saving}
             className="px-3 py-1 rounded bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving...' : 'Save'}
           </button>
           <button
             onClick={handleCancel}
@@ -587,6 +508,8 @@ function ConfirmedMerchantRow({
   )
 }
 
+// ── Main Page ───────────────────────────────────────────────────────
+
 function MerchantsPage() {
   const { merchants: merchantList, suggestions, stats, pendingMerchants: initialPending, categories } = Route.useLoaderData()
   const [showForm, setShowForm] = useState(false)
@@ -594,7 +517,6 @@ function MerchantsPage() {
   const [patterns, setPatterns] = useState<PatternInput[]>([
     { pattern: '', matchType: 'contains' },
   ])
-  const [defaultCategory, setDefaultCategory] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<{
@@ -620,9 +542,9 @@ function MerchantsPage() {
     return () => clearTimeout(timer)
   }, [patternsKey])
 
-  const updatePattern = (index: number, field: keyof PatternInput, value: string) => {
+  const updatePattern = (index: number, field: keyof PatternInput, value: string | boolean) => {
     setPatterns((prev) =>
-      prev.map((p, i) => (i === index ? { ...p, [field]: value } : p)),
+      prev.map((p, i) => (i === index ? { ...p, [field]: value === '' ? null : value } : p)),
     )
   }
 
@@ -643,7 +565,6 @@ function MerchantsPage() {
         data: {
           name: name.trim(),
           patterns: validPatterns,
-          defaultCategory: defaultCategory || null,
         },
       })
       setMessage(
@@ -651,7 +572,6 @@ function MerchantsPage() {
       )
       setName('')
       setPatterns([{ pattern: '', matchType: 'contains' }])
-      setDefaultCategory('')
       setPreviewResult(null)
       setShowForm(false)
       setTimeout(() => setMessage(null), 3000)
@@ -797,7 +717,6 @@ function MerchantsPage() {
               <tr className="border-b border-slate-200 bg-amber-50">
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Name</th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Patterns</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Category</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Action</th>
               </tr>
             </thead>
@@ -806,6 +725,7 @@ function MerchantsPage() {
                 <PendingMerchantPageRow
                   key={pm.id}
                   merchant={pm}
+                  confirmedMerchants={merchantList.map((m) => ({ id: m.id, name: m.name }))}
                   onConfirmed={handlePendingConfirmed}
                   onDeleted={handlePendingDeleted}
                   categories={categories}
@@ -825,71 +745,34 @@ function MerchantsPage() {
         <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-4">
           <h2 className="text-lg font-semibold">Create Merchant</h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Merchant Name
-              </label>
-              <input
-                type="text"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g., Amazon"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Default Category
-              </label>
-              <select
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                value={defaultCategory}
-                onChange={(e) => setDefaultCategory(e.target.value)}
-              >
-                <option value="">None</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Merchant Name
+            </label>
+            <input
+              type="text"
+              className="w-full max-w-md rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g., Amazon"
+            />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
-              Patterns <span className="text-slate-400 font-normal">(matched with OR logic)</span>
+              Patterns <span className="text-slate-400 font-normal">(each with its own category &amp; type)</span>
             </label>
             <div className="space-y-2">
               {patterns.map((p, i) => (
-                <div key={i} className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"
-                    value={p.pattern}
-                    onChange={(e) => updatePattern(i, 'pattern', e.target.value)}
-                    placeholder="e.g., AMZN MKTP"
-                  />
-                  <select
-                    className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-                    value={p.matchType}
-                    onChange={(e) => updatePattern(i, 'matchType', e.target.value)}
-                  >
-                    <option value="contains">Contains</option>
-                    <option value="starts_with">Starts with</option>
-                    <option value="exact">Exact match</option>
-                  </select>
-                  {patterns.length > 1 && (
-                    <button
-                      onClick={() => removePattern(i)}
-                      className="text-red-500 hover:text-red-700 text-sm px-2"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
+                <PatternRow
+                  key={i}
+                  pattern={p}
+                  index={i}
+                  categories={categories}
+                  canRemove={patterns.length > 1}
+                  onChange={updatePattern}
+                  onRemove={removePattern}
+                />
               ))}
               <button
                 onClick={addPattern}
@@ -936,7 +819,7 @@ function MerchantsPage() {
           <div className="px-6 py-4 border-b border-slate-200">
             <h2 className="text-lg font-semibold">Suggested Merchants</h2>
             <p className="text-sm text-slate-500 mt-1">
-              Common description patterns without a merchant assigned (2+ occurrences). Edit name, patterns, and category, then Apply.
+              Common description patterns without a merchant assigned (2+ occurrences). Edit name, patterns, category, and type, then Apply.
             </p>
           </div>
           <table className="w-full text-sm">
@@ -944,7 +827,6 @@ function MerchantsPage() {
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Name</th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Patterns</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Category</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Count</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Action</th>
               </tr>
@@ -967,7 +849,7 @@ function MerchantsPage() {
       <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200">
           <h2 className="text-lg font-semibold">
-            Confirmed Merchants ({merchantList.filter((m) => m.status === 'confirmed').length})
+            Confirmed Merchants ({merchantList.length})
           </h2>
         </div>
         {merchantList.length === 0 ? (
@@ -980,7 +862,6 @@ function MerchantsPage() {
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Name</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Patterns</th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Category</th>
                 <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Transactions</th>
                 <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Actions</th>
               </tr>

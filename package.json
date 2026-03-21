@@ -9,6 +9,8 @@
     "dev": "vite dev --port 3000 --host",
     "db:seed": "npx tsx scripts/seed.ts",
     "db:reset": "npx tsx scripts/reset-db.ts",
+    "db:backup": "scripts/backup-db.sh",
+    "db:restore": "scripts/restore-db.sh",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run"

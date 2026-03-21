@@ -43,6 +43,20 @@
       "when": 1773624574492,
       "tag": "0005_demonic_spyke",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1773628673967,
+      "tag": "0006_thin_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1773790523208,
+      "tag": "0007_curly_glorian",
+      "breakpoints": true
     }
   ]
 }

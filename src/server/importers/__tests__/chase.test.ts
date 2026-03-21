@@ -33,9 +33,9 @@ describe('importChase', () => {
     expect(result[0]!.sourceCategory).toBe('Food & Drink')
   })
 
-  it('infers expense for negative CC amount', () => {
+  it('sets transactionType to unknown (AI classifies later)', () => {
     const result = importChase(csv('01/15/2025,01/16/2025,GROCERY STORE,Shopping,Sale,-75.00,'), 1, 'chase.csv')
-    expect(result[0]!.transactionType).toBe('expense')
+    expect(result[0]!.transactionType).toBe('unknown')
   })
 
   it('infers payment method as credit', () => {

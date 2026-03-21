@@ -3,7 +3,6 @@ import {
   parseDate,
   parseAmount,
   computeImportHash,
-  inferTransactionType,
   inferPaymentMethod,
   parseCSV,
 } from '../utils'
@@ -102,69 +101,6 @@ describe('computeImportHash', () => {
     const a = computeImportHash(1, '2025-03-15', -42.5, 'AMAZON')
     const b = computeImportHash(1, '2025-03-15', -42.50, 'AMAZON')
     expect(a).toBe(b)
-  })
-})
-
-describe('inferTransactionType', () => {
-  it('detects income from direct deposit keywords', () => {
-    expect(inferTransactionType('DIRECT DEP ACME CORP', 500, 'checking')).toBe('income')
-    expect(inferTransactionType('PAYROLL DEPOSIT', 2000, 'checking')).toBe('income')
-    expect(inferTransactionType('DIR DEP EMPLOYER', 3000, 'checking')).toBe('income')
-  })
-
-  it('detects internal transfers', () => {
-    expect(inferTransactionType('TRANSFER FROM SAVINGS', -500, 'checking')).toBe('internal_transfer')
-    expect(inferTransactionType('TRANSFER TO CHECKING', -500, 'checking')).toBe('internal_transfer')
-    expect(inferTransactionType('XFER FROM CHK', 200, 'savings')).toBe('internal_transfer')
-    expect(inferTransactionType('XFER TO SAVINGS', -200, 'checking')).toBe('internal_transfer')
-    expect(inferTransactionType('ONLINE TRANSFER', -300, 'checking')).toBe('internal_transfer')
-    expect(inferTransactionType('FUNDS TRANSFER', -300, 'checking')).toBe('internal_transfer')
-  })
-
-  it('detects cc_payment from checking account', () => {
-    expect(inferTransactionType('AMERICAN EXPRESS PAYMENT', -500, 'checking')).toBe('cc_payment')
-    expect(inferTransactionType('AMEX CARD PYMT', -500, 'checking')).toBe('cc_payment')
-    expect(inferTransactionType('CAPITAL ONE PAYMENT', -500, 'checking')).toBe('cc_payment')
-    expect(inferTransactionType('CHASE CARD PAYMENT', -500, 'checking')).toBe('cc_payment')
-    expect(inferTransactionType('CHASE CREDIT CARD', -500, 'checking')).toBe('cc_payment')
-  })
-
-  it('does NOT classify cc company name as cc_payment on credit_card accounts', () => {
-    // On a CC account, a payment with positive amount is cc_payment via the CC side logic
-    expect(inferTransactionType('PAYMENT RECEIVED', 500, 'credit_card')).toBe('cc_payment')
-  })
-
-  it('detects cc_payment on CC side (positive + PAYMENT/AUTOPAY)', () => {
-    expect(inferTransactionType('PAYMENT THANK YOU', 500, 'credit_card')).toBe('cc_payment')
-    expect(inferTransactionType('AUTOPAY PAYMENT', 200, 'credit_card')).toBe('cc_payment')
-  })
-
-  it('detects refund on CC (positive + refund keywords)', () => {
-    expect(inferTransactionType('REFUND FROM MERCHANT', 25, 'credit_card')).toBe('refund')
-    expect(inferTransactionType('RETURN CREDIT', 50, 'credit_card')).toBe('refund')
-    expect(inferTransactionType('CREDIT ADJUSTMENT', 10, 'credit_card')).toBe('refund')
-    expect(inferTransactionType('REWARD POINTS', 5, 'credit_card')).toBe('refund')
-  })
-
-  it('detects interest/dividend as income', () => {
-    expect(inferTransactionType('INTEREST PAID', 0.5, 'savings')).toBe('income')
-    expect(inferTransactionType('DIVIDEND PAYMENT', 10, 'savings')).toBe('income')
-  })
-
-  it('detects expense on credit card (negative amount)', () => {
-    expect(inferTransactionType('AMAZON PURCHASE', -42.5, 'credit_card')).toBe('expense')
-  })
-
-  it('detects expense on checking (negative, no keyword match)', () => {
-    expect(inferTransactionType('ELECTRIC COMPANY', -150, 'checking')).toBe('expense')
-  })
-
-  it('detects expense on savings (negative, no keyword match)', () => {
-    expect(inferTransactionType('SOME WITHDRAWAL', -100, 'savings')).toBe('expense')
-  })
-
-  it('returns unknown for unmatched positive on checking', () => {
-    expect(inferTransactionType('RANDOM DEPOSIT', 100, 'checking')).toBe('unknown')
   })
 })
 

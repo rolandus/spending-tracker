@@ -42,7 +42,7 @@ export const getCategoriesWithCounts = createServerFn({ method: 'GET' }).handler
       name: categories.name,
       sortOrder: categories.sortOrder,
       transactionCount: sql<number>`(SELECT count(*) FROM transactions WHERE category = ${categories.name} AND ignored = 0)`,
-      merchantCount: sql<number>`(SELECT count(*) FROM merchants WHERE default_category = ${categories.name})`,
+      merchantCount: sql<number>`(SELECT count(DISTINCT merchant_id) FROM merchant_patterns WHERE default_category = ${categories.name})`,
     })
     .from(categories)
     .orderBy(asc(categories.sortOrder), asc(categories.name))
@@ -90,9 +90,9 @@ export const renameCategory = createServerFn({ method: 'POST' })
       sql`UPDATE transactions SET category = ${newName} WHERE category = ${oldName} AND ignored = 0`,
     )
 
-    // Update merchant defaults
+    // Update merchant pattern defaults
     const mResult = db.run(
-      sql`UPDATE merchants SET default_category = ${newName} WHERE default_category = ${oldName}`,
+      sql`UPDATE merchant_patterns SET default_category = ${newName} WHERE default_category = ${oldName}`,
     )
 
     // Update category rules
@@ -122,9 +122,9 @@ export const deleteCategory = createServerFn({ method: 'POST' })
       sql`UPDATE transactions SET category = NULL WHERE category = ${existing.name}`,
     )
 
-    // Clear merchant defaults
+    // Clear merchant pattern defaults
     const mResult = db.run(
-      sql`UPDATE merchants SET default_category = NULL WHERE default_category = ${existing.name}`,
+      sql`UPDATE merchant_patterns SET default_category = NULL WHERE default_category = ${existing.name}`,
     )
 
     // Delete category rules that used this category

@@ -18,14 +18,14 @@ describe('importLakeRidge', () => {
     expect(result[0]!.amount).toBe(-75.87)
   })
 
-  it('infers checking account type from filename', () => {
+  it('sets transactionType to unknown (AI classifies later)', () => {
     const result = importLakeRidge(csv('"01/15/2025","PURCHASE","","","-$50.00","$500.00"'), 4, 'lake-ridge-checking.csv')
-    expect(result[0]!.transactionType).toBe('expense')
+    expect(result[0]!.transactionType).toBe('unknown')
   })
 
-  it('infers savings account type from filename', () => {
+  it('sets transactionType to unknown for savings too', () => {
     const result = importLakeRidge(csv('"01/15/2025","INTEREST PAID","","","$0.50","$500.50"'), 5, 'lake-ridge-savings-2025.csv')
-    expect(result[0]!.transactionType).toBe('income')
+    expect(result[0]!.transactionType).toBe('unknown')
   })
 
   it('extracts check number', () => {
@@ -63,15 +63,15 @@ describe('importLakeRidge', () => {
     expect(() => importLakeRidge('Bad,Header\n1,2', 4, 'checking.csv')).toThrow('Invalid Lake Ridge CSV')
   })
 
-  it('detects direct deposit as income', () => {
+  it('sets unknown transactionType but preserves paymentMethod for direct deposit', () => {
     const result = importLakeRidge(csv('"01/15/2025","DIRECT DEP ACME CORP","","","$2000.00","$3000.00"'), 6, 'spending.csv')
-    expect(result[0]!.transactionType).toBe('income')
+    expect(result[0]!.transactionType).toBe('unknown')
     expect(result[0]!.paymentMethod).toBe('direct_deposit')
   })
 
-  it('detects transfer', () => {
+  it('sets unknown transactionType but preserves paymentMethod for transfer', () => {
     const result = importLakeRidge(csv('"01/15/2025","TRANSFER TO CHECKING","","","-$500.00","$2500.00"'), 6, 'spending.csv')
-    expect(result[0]!.transactionType).toBe('internal_transfer')
+    expect(result[0]!.transactionType).toBe('unknown')
     expect(result[0]!.paymentMethod).toBe('transfer')
   })
 })

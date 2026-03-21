@@ -1,5 +1,5 @@
 import type { ImporterFn } from './types'
-import { parseCSV, parseDate, parseAmount, computeImportHash, inferTransactionType, inferPaymentMethod } from './utils'
+import { parseCSV, parseDate, parseAmount, computeImportHash, inferPaymentMethod } from './utils'
 
 /**
  * Lake Ridge Bank CSV importer.
@@ -35,10 +35,8 @@ export const importLakeRidge: ImporterFn = (csvContent, accountId, sourceFile) =
     const amount = parseAmount(rawAmount)
     const cleanCheckNum = checkNumber?.replace(/"/g, '').trim() || null
 
-    const transactionType = inferTransactionType(description, amount, accountType)
     const paymentMethod = inferPaymentMethod(accountType, description, cleanCheckNum)
     const importHash = computeImportHash(accountId, date, amount, description)
-    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -46,14 +44,14 @@ export const importLakeRidge: ImporterFn = (csvContent, accountId, sourceFile) =
       postedDate: null,
       description: description.replace(/"/g, '').trim(),
       amount,
-      transactionType,
+      transactionType: 'unknown' as const,
       paymentMethod: paymentMethod ?? null,
       checkNumber: cleanCheckNum,
       cardholder: null,
       sourceCategory: null,
       category: null,
       notes: null,
-      ignored,
+      ignored: 0,
       sourceFile,
       importHash,
     }

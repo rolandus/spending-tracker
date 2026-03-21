@@ -1,5 +1,5 @@
 import type { ImporterFn } from './types'
-import { parseCSV, parseDate, computeImportHash, inferTransactionType, inferPaymentMethod } from './utils'
+import { parseCSV, parseDate, computeImportHash, inferPaymentMethod } from './utils'
 
 /**
  * Chase CSV importer.
@@ -26,10 +26,8 @@ export const importChase: ImporterFn = (csvContent, accountId, sourceFile) => {
     const postedDate = rawPostDate ? parseDate(rawPostDate) : null
     const amount = parseFloat(rawAmount.replace(/,/g, ''))
 
-    const transactionType = inferTransactionType(description, amount, 'credit_card')
     const paymentMethod = inferPaymentMethod('credit_card', description)
     const importHash = computeImportHash(accountId, date, amount, description)
-    const ignored = transactionType === 'cc_payment' || transactionType === 'internal_transfer' ? 1 : 0
 
     return {
       accountId,
@@ -37,14 +35,14 @@ export const importChase: ImporterFn = (csvContent, accountId, sourceFile) => {
       postedDate,
       description: description.trim(),
       amount,
-      transactionType,
+      transactionType: 'unknown' as const,
       paymentMethod: paymentMethod ?? null,
       checkNumber: null,
       cardholder: null,
       sourceCategory: category?.trim() || null,
       category: null,
       notes: null,
-      ignored,
+      ignored: 0,
       sourceFile,
       importHash,
     }

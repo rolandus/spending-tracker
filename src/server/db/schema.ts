@@ -84,7 +84,6 @@ export type NewCategoryRule = typeof categoryRules.$inferInsert
 export const merchants = sqliteTable('merchants', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  defaultCategory: text('default_category'),
   status: text('status', { enum: ['confirmed', 'pending'] })
     .notNull()
     .default('confirmed'),
@@ -107,6 +106,9 @@ export const merchantPatterns = sqliteTable('merchant_patterns', {
   })
     .notNull()
     .default('contains'),
+  defaultCategory: text('default_category'),
+  defaultTransactionType: text('default_transaction_type'),
+  defaultIgnored: integer('default_ignored').notNull().default(0),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(datetime('now'))`),

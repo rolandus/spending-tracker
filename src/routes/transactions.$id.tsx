@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { getTransaction, updateTransaction } from '../server/functions/transactions'
+import { CategoryPicker } from '../components/CategoryPicker'
+import { CATEGORIES } from '../shared/categories'
 
 export const Route = createFileRoute('/transactions/$id')({
   loader: async ({ params }) => {
@@ -32,6 +34,7 @@ function TransactionDetailPage() {
   const [category, setCategory] = useState(txn.category ?? '')
   const [notes, setNotes] = useState(txn.notes ?? '')
   const [transactionType, setTransactionType] = useState(txn.transactionType)
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [togglingIgnored, setTogglingIgnored] = useState(false)
@@ -156,15 +159,23 @@ function TransactionDetailPage() {
               </select>
             </div>
 
-            <div>
+            <div className="relative">
               <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-              <input
-                type="text"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="e.g., Groceries, Dining, Subscriptions"
-              />
+              <button
+                type="button"
+                onClick={() => setCategoryPickerOpen((o) => !o)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-left bg-white hover:bg-slate-50"
+              >
+                {category || <span className="text-slate-400">Select a category...</span>}
+              </button>
+              {categoryPickerOpen && (
+                <CategoryPicker
+                  value={category || null}
+                  categories={[...CATEGORIES]}
+                  onChange={(val) => setCategory(val ?? '')}
+                  onClose={() => setCategoryPickerOpen(false)}
+                />
+              )}
             </div>
           </div>
 
