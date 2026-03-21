@@ -4,8 +4,9 @@ import { db } from '../db'
 import { accounts, merchants, merchantPatterns } from '../db/schema'
 import { and, eq } from 'drizzle-orm'
 import { type PatternInput } from './merchants'
-import { CATEGORIES } from '../../shared/categories'
 import { INSTITUTION_DISPLAY_NAMES } from '../../shared/institutions'
+import { categories } from '../db/schema'
+import { asc } from 'drizzle-orm'
 
 export type AISuggestion = {
   type: 'new' | 'modify'
@@ -96,9 +97,12 @@ const TOOL_SCHEMA = {
   },
 }
 
-const SYSTEM_PROMPT = `You are a financial transaction analyzer. Given a list of bank transaction descriptions (with occurrence counts), group them by the company/merchant they belong to.
+function buildSystemPrompt(categoryList: string[]): string {
+  return `You are a financial transaction analyzer. Given a list of bank transaction descriptions (with occurrence counts), group them by the company/merchant they belong to and assign an appropriate category.
 
-You must classify every transaction description into one of three categories:
+Categories must be assigned as a best fit from this list: ${categoryList.join(', ')}
+
+You must classify every transaction description into one of three types:
 
 ## Type 1 — Ignored Transactions (defaultIgnored: true)
 These are NOT real spending — they are money moving between the user's own accounts:
@@ -107,7 +111,7 @@ These are NOT real spending — they are money moving between the user's own acc
 - Use the financial institution's display name as the merchant name
 - Set defaultTransactionType to "cc_payment" or "internal_transfer" as appropriate
 - Set defaultIgnored to true
-- Category can be left as "Other" since these are hidden
+- Category should be left undefined, since these are hidden
 
 ## Type 2 — Institution Transactions (defaultIgnored: false)
 These are real transactions from the bank/institution itself:
@@ -117,7 +121,7 @@ These are real transactions from the bank/institution itself:
 - Checks written (CHECK #, check payments)
 - Direct deposits / payroll
 - Use the financial institution's display name as the merchant name
-- Set appropriate category (e.g., "Fees/Interest" for fees and interest, "Other" for checks, "Income" for payroll/direct deposits)
+- Set appropriate category (see list of options above)
 - Set defaultIgnored to false
 
 ## Type 3 — Regular Merchants (defaultIgnored: false)
@@ -134,7 +138,7 @@ For each group:
 - patterns: One or more matching rules. Each has:
   - pattern: the string to match against transaction descriptions
   - matchType: "contains", "starts_with", or "exact"
-  - defaultCategory: Best-fit category from this list: ${CATEGORIES.join(', ')}
+  - defaultCategory: best fit chosen from list of categories above
   - defaultTransactionType: One of "expense", "income", "refund", "cc_payment", or "internal_transfer"
   - defaultIgnored: true for Type 1 (hidden), false for Types 2 and 3
   For "modify" suggestions, include ONLY the new patterns to add — not the merchant's existing patterns.
@@ -149,6 +153,7 @@ Rules:
 - Group descriptions that come from the same company, even if the text varies significantly (e.g., "AMZN MKTP US*123" and "Amazon.com*456" are both Amazon).
 - Every description in the input should appear in exactly one group's matchedDescriptions — do not skip any, even if a description only has 1 occurrence.
 - Sort suggestions by the total occurrence count (sum of all matched descriptions' counts), highest first.`
+}
 
 type RawSuggestion = {
   type?: string
@@ -357,7 +362,11 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       return { suggestions: [], pendingMerchants: [] }
     }
 
-    // 1. Gather existing merchants + their patterns (the "memory")
+    // 1. Fetch categories from DB for the AI prompt
+    const categoryRows = db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)).all()
+    const categoryList = categoryRows.map((c) => c.name)
+
+    // 2. Gather existing merchants + their patterns (the "memory")
     const existingMerchants = db.select().from(merchants).all()
     const existingPatterns = db.select().from(merchantPatterns).all()
 
@@ -404,7 +413,7 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       response = await client.messages.create({
         model: 'claude-haiku-4-5',
         max_tokens: 8192,
-        system: SYSTEM_PROMPT,
+        system: buildSystemPrompt(categoryList),
         tools: [TOOL_SCHEMA],
         tool_choice: { type: 'tool', name: 'suggest_merchants' },
         messages: [{ role: 'user', content: userMessage }],

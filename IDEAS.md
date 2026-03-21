@@ -3,6 +3,7 @@
 * Mobile check deposits should be handled like transfers? I'm not sure on this one.
 * If you bail out on the merchant assignment step and then go to the merchants page, it says everything is already assigned. I guess it is because the imports didn't import, soo....
 * User sees two tabs: New and Duplicates. Duplicate imports are shown next to the original from the DB, showing the timestamp when the original was imported. 
+* How to handle ATM withdrawls (cash)
 
 # Data Model
 * [IMPORTANT] - ability to do a data backup and restore from backup.

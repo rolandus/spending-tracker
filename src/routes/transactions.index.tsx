@@ -198,18 +198,6 @@ function TransactionsPage() {
         size: 120,
       },
       {
-        accessorKey: 'paymentMethod',
-        header: 'Method',
-        cell: (info) => info.getValue<string | null>()?.replace('_', ' ') ?? '',
-        size: 100,
-      },
-      {
-        accessorKey: 'cardholder',
-        header: 'Cardholder',
-        cell: (info) => info.getValue<string | null>() ?? '',
-        size: 120,
-      },
-      {
         accessorKey: 'category',
         header: 'Category',
         cell: (info) => (

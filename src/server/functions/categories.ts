@@ -3,39 +3,18 @@ import { db } from '../db'
 import { categories, categoryRules, transactions } from '../db/schema'
 import { eq, like, sql, isNull, desc, and, notInArray, lt, asc } from 'drizzle-orm'
 import type { CategoryRule } from '../db/schema'
-import { CATEGORIES } from '../../shared/categories'
 
 /**
- * Get all categories from the DB. Seeds from the hardcoded list on first call.
+ * Get all categories from the DB.
  */
 export const getCategories = createServerFn({ method: 'GET' }).handler(async () => {
-  let rows = db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)).all()
-
-  // Auto-seed if empty
-  if (rows.length === 0) {
-    for (let i = 0; i < CATEGORIES.length; i++) {
-      db.insert(categories)
-        .values({ name: CATEGORIES[i], sortOrder: i })
-        .onConflictDoNothing()
-        .run()
-    }
-    rows = db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)).all()
-  }
-
-  return rows
+  return db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)).all()
 })
 
 /**
  * Get categories with transaction counts.
  */
 export const getCategoriesWithCounts = createServerFn({ method: 'GET' }).handler(async () => {
-  // Ensure seeded
-  let rows = db.select().from(categories).all()
-  if (rows.length === 0) {
-    await getCategories()
-    rows = db.select().from(categories).all()
-  }
-
   const result = db
     .select({
       id: categories.id,
