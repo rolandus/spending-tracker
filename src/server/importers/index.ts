@@ -1,6 +1,7 @@
 import { importAmex } from './amex'
 import { importCapitalOne } from './capital-one'
 import { importChase } from './chase'
+import { importFidelity } from './fidelity'
 import { importLakeRidge } from './lake-ridge'
 import type { ImporterFn } from './types'
 
@@ -13,6 +14,7 @@ export const importers: Record<string, ImporterFn> = {
   amex: importAmex,
   capital_one: importCapitalOne,
   chase: importChase,
+  fidelity: importFidelity,
   lake_ridge: importLakeRidge,
 }
 

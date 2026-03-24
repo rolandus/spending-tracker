@@ -152,15 +152,23 @@ function TransactionsPage() {
         header: 'Description',
         cell: (info) => {
           const merchantName = info.row.original.merchantName
+          const notes = info.row.original.notes
           const description = info.getValue<string>()
           return (
-            <div className="truncate max-w-md" title={description}>
-              {merchantName && (
-                <span className="text-xs font-medium text-blue-600 mr-1.5">{merchantName}</span>
+            <div className="max-w-md">
+              <div className="truncate" title={description}>
+                {merchantName && (
+                  <span className="text-xs font-medium text-blue-600 mr-1.5">{merchantName}</span>
+                )}
+                <span className={merchantName ? 'text-slate-400 text-xs' : ''}>
+                  {description}
+                </span>
+              </div>
+              {notes && (
+                <div className="text-xs text-slate-400 italic truncate" title={notes}>
+                  {notes}
+                </div>
               )}
-              <span className={merchantName ? 'text-slate-400 text-xs' : ''}>
-                {description}
-              </span>
             </div>
           )
         },

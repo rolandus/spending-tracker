@@ -18,6 +18,11 @@ const seedAccounts = [
     type: 'credit_card' as const,
   },
   {
+    name: 'Fidelity Individual',
+    institution: 'fidelity' as const,
+    type: 'brokerage' as const,
+  },
+  {
     name: 'Lake Ridge Checking',
     institution: 'lake_ridge' as const,
     type: 'checking' as const,

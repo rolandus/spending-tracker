@@ -5,10 +5,10 @@ export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   institution: text('institution', {
-    enum: ['amex', 'capital_one', 'chase', 'lake_ridge'],
+    enum: ['amex', 'capital_one', 'chase', 'fidelity', 'lake_ridge'],
   }).notNull(),
   type: text('type', {
-    enum: ['checking', 'savings', 'credit_card'],
+    enum: ['checking', 'savings', 'credit_card', 'brokerage'],
   }).notNull(),
   last4: text('last4'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
