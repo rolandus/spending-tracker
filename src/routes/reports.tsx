@@ -6,6 +6,8 @@ import {
   getPaymentMethodBreakdown,
   getYearOverYearComparison,
   getAvailablePeriods,
+  getIncomeAverages,
+  getExpenseAverages,
 } from '../server/functions/reports'
 
 export const Route = createFileRoute('/reports')({
@@ -23,13 +25,15 @@ export const Route = createFileRoute('/reports')({
       month = parseInt(m!)
     }
 
-    const [categoryBreakdown, trend, paymentMethods] = await Promise.all([
+    const [categoryBreakdown, trend, paymentMethods, incomeAverages, expenseAverages] = await Promise.all([
       getMonthlySpendingByCategory({ data: { year, month } }),
       getMonthlySpendingTrend({ data: { months: 12 } }),
       getPaymentMethodBreakdown({ data: { year, month } }),
+      getIncomeAverages(),
+      getExpenseAverages(),
     ])
 
-    return { periods, categoryBreakdown, trend, paymentMethods, selectedYear: year, selectedMonth: month }
+    return { periods, categoryBreakdown, trend, paymentMethods, incomeAverages, expenseAverages, selectedYear: year, selectedMonth: month }
   },
   component: ReportsPage,
 })
@@ -61,10 +65,10 @@ const METHOD_COLORS: Record<string, string> = {
 }
 
 function ReportsPage() {
-  const { periods, categoryBreakdown, trend, paymentMethods, selectedYear, selectedMonth } =
+  const { periods, categoryBreakdown, trend, paymentMethods, incomeAverages, expenseAverages, selectedYear, selectedMonth } =
     Route.useLoaderData()
 
-  const [tab, setTab] = useState<'monthly' | 'trend' | 'payment' | 'yoy'>('monthly')
+  const [tab, setTab] = useState<'monthly' | 'trend' | 'payment' | 'yoy' | 'averages'>('monthly')
   const [yoyYear1, setYoyYear1] = useState(periods.years[1] ?? periods.years[0] ?? 2024)
   const [yoyYear2, setYoyYear2] = useState(periods.years[0] ?? 2025)
   const [yoyData, setYoyData] = useState<Awaited<ReturnType<typeof getYearOverYearComparison>> | null>(null)
@@ -91,6 +95,7 @@ function ReportsPage() {
           ['trend', 'Trend'],
           ['payment', 'Payment Methods'],
           ['yoy', 'Year over Year'],
+          ['averages', 'Averages'],
         ] as const).map(([key, label]) => (
           <button
             key={key}
@@ -230,6 +235,91 @@ function ReportsPage() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Averages */}
+      {tab === 'averages' && (
+        <div className="space-y-6">
+        <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-4">
+          <h2 className="text-lg font-semibold">Monthly Income Averages</h2>
+
+          {incomeAverages.oldestMonth && incomeAverages.newestMonth ? (
+            <>
+              <p className="text-sm text-slate-500">
+                {(() => {
+                  const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+                  const [oy, om] = incomeAverages.oldestMonth!.split('-')
+                  const [ny, nm] = incomeAverages.newestMonth!.split('-')
+                  return `${SHORT_MONTHS[parseInt(om!) - 1]} ${oy} – ${SHORT_MONTHS[parseInt(nm!) - 1]} ${ny}`
+                })()}
+              </p>
+
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Category</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Monthly Average</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incomeAverages.rows.map((row) => (
+                    <tr key={row.category} className="border-b border-slate-100">
+                      <td className="px-3 py-2">{row.category}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.monthlyAverage)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-slate-300 font-semibold">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatCurrency(incomeAverages.totalMonthlyAverage)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p className="text-slate-500 text-center py-8">No income data available.</p>
+          )}
+        </div>
+
+        <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-4">
+          <h2 className="text-lg font-semibold">Monthly Expense Averages</h2>
+
+          {expenseAverages.oldestMonth && expenseAverages.newestMonth ? (
+            <>
+              <p className="text-sm text-slate-500">
+                {(() => {
+                  const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+                  const [oy, om] = expenseAverages.oldestMonth!.split('-')
+                  const [ny, nm] = expenseAverages.newestMonth!.split('-')
+                  return `${SHORT_MONTHS[parseInt(om!) - 1]} ${oy} – ${SHORT_MONTHS[parseInt(nm!) - 1]} ${ny}`
+                })()}
+              </p>
+
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Category</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Monthly Average</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expenseAverages.rows.map((row) => (
+                    <tr key={row.category} className="border-b border-slate-100">
+                      <td className="px-3 py-2">{row.category}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.monthlyAverage)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-slate-300 font-semibold">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatCurrency(expenseAverages.totalMonthlyAverage)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p className="text-slate-500 text-center py-8">No expense data available.</p>
+          )}
+        </div>
         </div>
       )}
 

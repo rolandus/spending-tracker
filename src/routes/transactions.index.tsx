@@ -16,6 +16,7 @@ interface TransactionsSearch {
   dateFrom?: string
   dateTo?: string
   transactionType?: string
+  category?: string
   search?: string
   showIgnored?: boolean
   page?: number
@@ -27,6 +28,7 @@ export const Route = createFileRoute('/transactions/')({
     dateFrom: search.dateFrom as string | undefined,
     dateTo: search.dateTo as string | undefined,
     transactionType: search.transactionType as string | undefined,
+    category: search.category as string | undefined,
     search: search.search as string | undefined,
     showIgnored: search.showIgnored === true || search.showIgnored === 'true' ? true : undefined,
     page: search.page ? Number(search.page) : undefined,
@@ -278,6 +280,21 @@ function TransactionsPage() {
           >
             {TRANSACTION_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
+          <select
+            className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            value={search.category ?? ''}
+            onChange={(e) => updateSearch({ category: e.target.value || undefined })}
+          >
+            <option value="">All categories</option>
+            <option value="__uncategorized__">Uncategorized</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
             ))}
           </select>
         </div>

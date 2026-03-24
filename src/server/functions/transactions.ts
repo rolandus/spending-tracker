@@ -9,6 +9,7 @@ export interface TransactionFilters {
   dateFrom?: string
   dateTo?: string
   transactionType?: string
+  category?: string
   search?: string
   showIgnored?: boolean
   page?: number
@@ -42,6 +43,7 @@ export const getTransactions = createServerFn({ method: 'GET' })
       dateFrom,
       dateTo,
       transactionType,
+      category,
       search,
       showIgnored,
       page = 1,
@@ -69,6 +71,13 @@ export const getTransactions = createServerFn({ method: 'GET' })
     }
     if (transactionType) {
       conditions.push(eq(transactions.transactionType, transactionType as Transaction['transactionType']))
+    }
+    if (category) {
+      if (category === '__uncategorized__') {
+        conditions.push(sql`${transactions.category} IS NULL`)
+      } else {
+        conditions.push(eq(transactions.category, category))
+      }
     }
     if (search) {
       conditions.push(like(transactions.description, `%${search}%`))

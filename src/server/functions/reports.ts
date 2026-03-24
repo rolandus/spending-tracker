@@ -142,6 +142,105 @@ export const getYearOverYearComparison = createServerFn({ method: 'GET' })
   })
 
 /**
+ * Monthly average income by category across all available data.
+ * Only includes non-ignored income transactions.
+ */
+export const getIncomeAverages = createServerFn({ method: 'GET' }).handler(async () => {
+  // Get the distinct months that have income data
+  const monthRows = db.all<{ yearMonth: string }>(
+    sql.raw(`
+      SELECT DISTINCT SUBSTR(date, 1, 7) as yearMonth
+      FROM transactions
+      WHERE transaction_type = 'income' AND ignored = 0
+      ORDER BY yearMonth ASC
+    `),
+  )
+
+  if (monthRows.length === 0) {
+    return { rows: [], grandTotal: 0, totalMonthlyAverage: 0, oldestMonth: null, newestMonth: null }
+  }
+
+  const numMonths = monthRows.length
+  const oldestMonth = monthRows[0]!.yearMonth
+  const newestMonth = monthRows[monthRows.length - 1]!.yearMonth
+
+  // Get total income per category
+  const rows = db.all<{ category: string; total: number }>(
+    sql.raw(`
+      SELECT
+        COALESCE(category, 'Uncategorized') as category,
+        SUM(ABS(amount)) as total
+      FROM transactions
+      WHERE transaction_type = 'income' AND ignored = 0
+      GROUP BY COALESCE(category, 'Uncategorized')
+      ORDER BY SUM(ABS(amount)) DESC
+    `),
+  )
+
+  const rowsWithAverage = rows.map((r) => ({
+    category: r.category,
+    total: r.total,
+    monthlyAverage: r.total / numMonths,
+  }))
+
+  // Sort by monthly average descending
+  rowsWithAverage.sort((a, b) => b.monthlyAverage - a.monthlyAverage)
+
+  const grandTotal = rows.reduce((sum, r) => sum + r.total, 0)
+  const totalMonthlyAverage = grandTotal / numMonths
+
+  return { rows: rowsWithAverage, grandTotal, totalMonthlyAverage, oldestMonth, newestMonth }
+})
+
+/**
+ * Monthly average expenses by category across all available data.
+ * Only includes non-ignored expense transactions.
+ */
+export const getExpenseAverages = createServerFn({ method: 'GET' }).handler(async () => {
+  const monthRows = db.all<{ yearMonth: string }>(
+    sql.raw(`
+      SELECT DISTINCT SUBSTR(date, 1, 7) as yearMonth
+      FROM transactions
+      WHERE transaction_type = 'expense' AND ignored = 0
+      ORDER BY yearMonth ASC
+    `),
+  )
+
+  if (monthRows.length === 0) {
+    return { rows: [], grandTotal: 0, totalMonthlyAverage: 0, oldestMonth: null, newestMonth: null }
+  }
+
+  const numMonths = monthRows.length
+  const oldestMonth = monthRows[0]!.yearMonth
+  const newestMonth = monthRows[monthRows.length - 1]!.yearMonth
+
+  const rows = db.all<{ category: string; total: number }>(
+    sql.raw(`
+      SELECT
+        COALESCE(category, 'Uncategorized') as category,
+        SUM(ABS(amount)) as total
+      FROM transactions
+      WHERE transaction_type = 'expense' AND ignored = 0
+      GROUP BY COALESCE(category, 'Uncategorized')
+      ORDER BY SUM(ABS(amount)) DESC
+    `),
+  )
+
+  const rowsWithAverage = rows.map((r) => ({
+    category: r.category,
+    total: r.total,
+    monthlyAverage: r.total / numMonths,
+  }))
+
+  rowsWithAverage.sort((a, b) => b.monthlyAverage - a.monthlyAverage)
+
+  const grandTotal = rows.reduce((sum, r) => sum + r.total, 0)
+  const totalMonthlyAverage = grandTotal / numMonths
+
+  return { rows: rowsWithAverage, grandTotal, totalMonthlyAverage, oldestMonth, newestMonth }
+})
+
+/**
  * Get available years and months from transaction data.
  */
 export const getAvailablePeriods = createServerFn({ method: 'GET' }).handler(async () => {
