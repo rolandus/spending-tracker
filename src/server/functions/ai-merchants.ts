@@ -399,61 +399,84 @@ export const callMerchantAI = createServerFn({ method: 'POST' })
       }
     }
 
-    // 3. Build the descriptions list
-    const descriptionLines = descriptions
-      .map((d) => `${d.description} (${d.count})`)
-      .join('\n')
+    // 3. Sort descriptions alphabetically and split into batches of 50
+    const BATCH_SIZE = 50
+    const sorted = [...descriptions].sort((a, b) => a.description.localeCompare(b.description))
+    const batches: typeof descriptions[] = []
+    for (let i = 0; i < sorted.length; i += BATCH_SIZE) {
+      batches.push(sorted.slice(i, i + BATCH_SIZE))
+    }
 
-    const userMessage = `${memorySection}${institutionContext}## Unassigned Transaction Descriptions\n${descriptionLines}`
-
-    // 4. Call Claude Haiku
     const client = new Anthropic({ apiKey })
-    let response
-    try {
-      response = await client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 8192,
-        system: buildSystemPrompt(categoryList),
-        tools: [TOOL_SCHEMA],
-        tool_choice: { type: 'tool', name: 'suggest_merchants' },
-        messages: [{ role: 'user', content: userMessage }],
-      })
-    } catch (err: unknown) {
-      if (err instanceof Anthropic.APIError) {
-        const body = err.error as { error?: { message?: string } } | undefined
-        const detail = body?.error?.message ?? err.message
-        throw new Error(`Anthropic API error: ${detail}`)
+    const allSuggestions: AISuggestion[] = []
+    const allPendingMerchants: PendingMerchant[] = []
+
+    // 4. Process each batch sequentially
+    for (const batch of batches) {
+      const descriptionLines = batch
+        .map((d) => `${d.description} (${d.count})`)
+        .join('\n')
+
+      const userMessage = `${memorySection}${institutionContext}## Unassigned Transaction Descriptions\n${descriptionLines}`
+
+      let response
+      try {
+        response = await client.messages.create({
+          model: 'claude-sonnet-4-5-20250929',
+          max_tokens: 8192,
+          system: buildSystemPrompt(categoryList),
+          tools: [TOOL_SCHEMA],
+          tool_choice: { type: 'tool', name: 'suggest_merchants' },
+          messages: [{ role: 'user', content: userMessage }],
+        })
+      } catch (err: unknown) {
+        if (err instanceof Anthropic.APIError) {
+          const body = err.error as { error?: { message?: string } } | undefined
+          const detail = body?.error?.message ?? err.message
+          throw new Error(`Anthropic API error: ${detail}`)
+        }
+        throw err
       }
-      throw err
+
+      // 5. Validate response completeness
+      if (response.stop_reason !== 'end_turn' && response.stop_reason !== 'tool_use') {
+        throw new Error(`AI response was incomplete (stop_reason: ${response.stop_reason}). Try again with fewer transactions.`)
+      }
+
+      const toolUseBlock = response.content.find((block) => block.type === 'tool_use')
+      if (!toolUseBlock || toolUseBlock.type !== 'tool_use') {
+        throw new Error('AI did not return structured suggestions')
+      }
+
+      const rawSuggestions = (
+        toolUseBlock.input as { suggestions: RawSuggestion[] }
+      ).suggestions
+
+      if (!Array.isArray(rawSuggestions)) {
+        throw new Error('AI returned malformed suggestions (expected an array)')
+      }
+
+      // 6. Convert to typed suggestions (per-pattern defaults)
+      const suggestions: AISuggestion[] = rawSuggestions.map((s) => ({
+        type: (s.type as 'new' | 'modify') ?? 'new',
+        name: s.name,
+        existingMerchantName: s.existingMerchantName,
+        patterns: s.patterns.map((p) => ({
+          pattern: p.pattern,
+          matchType: p.matchType as PatternInput['matchType'],
+          defaultCategory: p.defaultCategory ?? null,
+          defaultTransactionType: p.defaultTransactionType ?? null,
+          defaultIgnored: p.defaultIgnored ?? false,
+        })),
+        matchedDescriptions: s.matchedDescriptions,
+      }))
+
+      // 7. Save as pending merchants in the database
+      const pendingMerchants = saveSuggestionsAsPending(suggestions)
+
+      allSuggestions.push(...suggestions)
+      allPendingMerchants.push(...pendingMerchants)
     }
 
-    // 5. Parse tool use response
-    const toolUseBlock = response.content.find((block) => block.type === 'tool_use')
-    if (!toolUseBlock || toolUseBlock.type !== 'tool_use') {
-      throw new Error('AI did not return structured suggestions')
-    }
-
-    const rawSuggestions = (
-      toolUseBlock.input as { suggestions: RawSuggestion[] }
-    ).suggestions
-
-    // 6. Convert to typed suggestions (per-pattern defaults)
-    const suggestions: AISuggestion[] = rawSuggestions.map((s) => ({
-      type: (s.type as 'new' | 'modify') ?? 'new',
-      name: s.name,
-      existingMerchantName: s.existingMerchantName,
-      patterns: s.patterns.map((p) => ({
-        pattern: p.pattern,
-        matchType: p.matchType as PatternInput['matchType'],
-        defaultCategory: p.defaultCategory ?? null,
-        defaultTransactionType: p.defaultTransactionType ?? null,
-        defaultIgnored: p.defaultIgnored ?? false,
-      })),
-      matchedDescriptions: s.matchedDescriptions,
-    }))
-
-    // 7. Save as pending merchants in the database
-    const pendingMerchants = saveSuggestionsAsPending(suggestions)
-
-    return { suggestions, pendingMerchants }
+    return { suggestions: allSuggestions, pendingMerchants: allPendingMerchants }
   })

@@ -14,12 +14,13 @@
 
 # Categories
 
-# Transaction List
+# Transaction
 * Abilitiy to easily edit things inline
 * Turns out there is a notes filed in the DB, but no way to view it in the list. Also, it doesn't seem to save.
 * The whole list needs cleaning up for better UX
 * Ability to link a charge with a refund (like reimbursements for work, or Menards returns, etc...), so they don't show up as "spending"
 * Ability to split transactions
+* Ability to manually assign merchant? Do I really want this?
 
 # Merchants
 * [IMPORTANT] Pending merchants need a "Merge with..." dropdown list where you indicate an existing merchant to tack the rules onto.

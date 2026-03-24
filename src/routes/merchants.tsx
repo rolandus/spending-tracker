@@ -526,6 +526,29 @@ function MerchantsPage() {
   const [pendingList, setPendingList] = useState<PendingMerchant[]>(initialPending)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [sortField, setSortField] = useState<'name' | 'transactionCount'>('transactionCount')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const sortedMerchants = [...merchantList].sort((a, b) => {
+    if (sortField === 'name') {
+      const cmp = a.name.localeCompare(b.name)
+      return sortDir === 'asc' ? cmp : -cmp
+    }
+    const cmp = a.transactionCount - b.transactionCount
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+
+  const handleSort = (field: 'name' | 'transactionCount') => {
+    if (sortField === field) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir(field === 'name' ? 'asc' : 'desc')
+    }
+  }
+
+  const sortIndicator = (field: 'name' | 'transactionCount') =>
+    sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
 
   // Live preview for create form
   const patternsKey = JSON.stringify(patterns)
@@ -860,14 +883,14 @@ function MerchantsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Name</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase cursor-pointer select-none hover:text-slate-900" onClick={() => handleSort('name')}>Name{sortIndicator('name')}</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase">Patterns</th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Transactions</th>
+                <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase cursor-pointer select-none hover:text-slate-900" onClick={() => handleSort('transactionCount')}>Transactions{sortIndicator('transactionCount')}</th>
                 <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-600 uppercase">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {merchantList.map((m) => (
+              {sortedMerchants.map((m) => (
                 <ConfirmedMerchantRow
                   key={m.id}
                   merchant={m}
