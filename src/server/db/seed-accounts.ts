@@ -23,6 +23,11 @@ const seedAccounts = [
     type: 'brokerage' as const,
   },
   {
+    name: 'Schwab Individual',
+    institution: 'schwab' as const,
+    type: 'brokerage' as const,
+  },
+  {
     name: 'Lake Ridge Checking',
     institution: 'lake_ridge' as const,
     type: 'checking' as const,

@@ -5,7 +5,7 @@ export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   institution: text('institution', {
-    enum: ['amex', 'capital_one', 'chase', 'fidelity', 'lake_ridge'],
+    enum: ['amex', 'capital_one', 'chase', 'fidelity', 'lake_ridge', 'schwab'],
   }).notNull(),
   type: text('type', {
     enum: ['checking', 'savings', 'credit_card', 'brokerage'],

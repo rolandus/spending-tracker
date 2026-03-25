@@ -4,4 +4,5 @@ export const INSTITUTION_DISPLAY_NAMES: Record<string, string> = {
   chase: 'Chase',
   fidelity: 'Fidelity',
   lake_ridge: 'Lake Ridge Bank',
+  schwab: 'Charles Schwab',
 }

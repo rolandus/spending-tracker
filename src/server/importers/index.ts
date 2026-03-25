@@ -3,6 +3,7 @@ import { importCapitalOne } from './capital-one'
 import { importChase } from './chase'
 import { importFidelity } from './fidelity'
 import { importLakeRidge } from './lake-ridge'
+import { importSchwab } from './schwab'
 import type { ImporterFn } from './types'
 
 export type { NormalizedTransaction, PipelineTransaction, ImportResult, ImporterFn } from './types'
@@ -16,6 +17,7 @@ export const importers: Record<string, ImporterFn> = {
   chase: importChase,
   fidelity: importFidelity,
   lake_ridge: importLakeRidge,
+  schwab: importSchwab,
 }
 
 /**
